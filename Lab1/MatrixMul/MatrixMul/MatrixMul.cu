@@ -5,8 +5,12 @@
 #include <iostream>
 #include <cuda_runtime.h>
 #include <stdio.h>
+#include <chrono>
+
 using namespace std;
 using std::vector;
+using namespace std::chrono;
+
 
 #define N 5
 
@@ -109,13 +113,22 @@ int main() {
     fillMatrix(A);
     fillMatrix(B);
 
+    auto start_cpu = chrono::high_resolution_clock::now();
     vector<vector<int>> res_from_CPU = MatrixMultiplyCPU(A, B, n);
+    auto end_cpu = chrono::high_resolution_clock::now();
+    chrono::duration<double> cpu_time = end_cpu - start_cpu;
+
+    auto start_gpu = chrono::high_resolution_clock::now();
     vector<vector<int>> res_from_GPU = MatrixMultCUDA(A, B, n);
+    auto end_gpu = chrono::high_resolution_clock::now();
+    chrono::duration<double> gpu_time = end_gpu - start_gpu;
 
 
+    cout << "GPU time: " << gpu_time.count() << " secund \n";
     cout << "GPU result:\n";
     printMatrix(res_from_GPU);
     
+    cout << "CPU time: " << cpu_time.count() << " secund \n";
     cout << "CPU result:\n";
     printMatrix(res_from_CPU);
 
