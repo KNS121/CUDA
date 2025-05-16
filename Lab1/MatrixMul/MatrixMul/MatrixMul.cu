@@ -12,7 +12,11 @@ using std::vector;
 using namespace std::chrono;
 
 
-#define N 5
+#define N 1024
+
+dim3 kolvo_potokov(32, 32);
+dim3 kolvo_blockov(32, 32);
+
 
 void fillMatrix(vector<vector<int>>& matrix) {
     for (auto& row : matrix) {
@@ -47,6 +51,20 @@ __global__ void MatrixMultplyGPU(int* A, int* B, int* C, int n) {
 }
 
 
+bool proverka_results(const vector<vector<int>>& Res_CPU, const vector<vector<int>>& Res_GPU, const int n) {
+    
+
+    for (int i = 0; i < n; ++i) {
+        for (int j = 0; j < n; ++j) {
+            if ( Res_GPU[i][j] != Res_CPU[i][j] ) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+
 
 vector<vector<int>> MatrixMultCUDA(const vector<vector<int>>& A, const vector<vector<int>>& B, const int n) {
 
@@ -75,7 +93,7 @@ vector<vector<int>> MatrixMultCUDA(const vector<vector<int>>& A, const vector<ve
     cudaMemcpy(dev_A, one_dim_array_A, n * n * sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(dev_B, one_dim_array_B, n * n * sizeof(int), cudaMemcpyHostToDevice);
 
-    MatrixMultplyGPU << <1, 1 >> > (dev_A, dev_B, dev_res, n);
+    MatrixMultplyGPU <<< kolvo_blockov, kolvo_potokov >> > (dev_A, dev_B, dev_res, n);
 
     // obratno
     cudaMemcpy(one_dim_array_reuslt, dev_res, n * n * sizeof(int), cudaMemcpyDeviceToHost);
@@ -105,32 +123,45 @@ vector<vector<int>> MatrixMultCUDA(const vector<vector<int>>& A, const vector<ve
 
 int main() {
 
-    const int n = 1;
+    //cudaDeviceProp prop;
+    //cudaGetDeviceProperties(&prop, 0);
+    //printf("maximum potokov: %d\n", prop.maxThreadsPerBlock);
+    //printf("maximum blokov: %d\n", prop.maxGridSize[0]);
 
-    vector<vector<int>> A(n, vector<int>(n));
-    vector<vector<int>> B(n, vector<int>(n));
+    //const int n = 1;
+
+    vector<vector<int>> A(N, vector<int>(N));
+    vector<vector<int>> B(N, vector<int>(N));
 
     fillMatrix(A);
     fillMatrix(B);
 
     auto start_cpu = chrono::high_resolution_clock::now();
-    vector<vector<int>> res_from_CPU = MatrixMultiplyCPU(A, B, n);
+    vector<vector<int>> res_from_CPU = MatrixMultiplyCPU(A, B, N);
     auto end_cpu = chrono::high_resolution_clock::now();
     chrono::duration<double> cpu_time = end_cpu - start_cpu;
 
     auto start_gpu = chrono::high_resolution_clock::now();
-    vector<vector<int>> res_from_GPU = MatrixMultCUDA(A, B, n);
+    vector<vector<int>> res_from_GPU = MatrixMultCUDA(A, B, N);
     auto end_gpu = chrono::high_resolution_clock::now();
     chrono::duration<double> gpu_time = end_gpu - start_gpu;
 
 
+    bool check = proverka_results(res_from_CPU, res_from_GPU, N);
+
+    cout << "Razmer matrix : " << N << " \n";
+
     cout << "GPU time: " << gpu_time.count() << " secund \n";
-    cout << "GPU result:\n";
-    printMatrix(res_from_GPU);
+    //cout << "GPU result:\n";
+    //printMatrix(res_from_GPU);
     
     cout << "CPU time: " << cpu_time.count() << " secund \n";
-    cout << "CPU result:\n";
-    printMatrix(res_from_CPU);
+    //cout << "CPU result:\n";
+    //printMatrix(res_from_CPU);
+
+
+
+    cout << "proverka rezov - " << check << "\n";
 
     return 0;
 }
