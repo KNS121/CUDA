@@ -64,16 +64,19 @@ vector<vector<int>> MatrixMultCUDA(const vector<vector<int>>& A, const vector<ve
     int* dev_B;
     int* dev_res;
 
-    cudaMemcpy(dev_A, one_dim_array_A, n * n * sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(dev_B, one_dim_array_B, n * n * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMalloc(&dev_A, n * n * sizeof(int));
+    cudaMalloc(&dev_B, n * n * sizeof(int));
+    cudaMalloc(&dev_res, n * n * sizeof(int));
 
+    cudaMemcpy(&dev_A, one_dim_array_A, n * n * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(&dev_B, one_dim_array_B, n * n * sizeof(int), cudaMemcpyHostToDevice);
 
     MatrixMultplyGPU << <1, 1 >> > (dev_A, dev_B, dev_res, n);
 
     // obratno
     cudaMemcpy(dev_res, one_dim_array_reuslt, n * n * sizeof(int), cudaMemcpyDeviceToHost);
    
-    vector<vector<int>> resultMatrix(N, vector<int>(N, 0));
+    vector<vector<int>> resultMatrix(n, vector<int>(n, 0));
 
     for (int i = 0; i < n; ++i) {
         for (int j = 0; j < n; ++j) {
@@ -93,16 +96,19 @@ vector<vector<int>> MatrixMultCUDA(const vector<vector<int>>& A, const vector<ve
 
 int main() {
 
-    vector<vector<int>> A(1, vector<int>(1));
-    vector<vector<int>> B(1, vector<int>(1));
+    const int n = 1;
+
+    vector<vector<int>> A(n, vector<int>(n));
+    vector<vector<int>> B(n, vector<int>(n));
 
     fillMatrix(A);
     fillMatrix(B);
 
-    vector<vector<int>> res_from_CPU = MatrixMultiplyCPU(A, B, 1);
-    vector<vector<int>> res_from_GPU = MatrixMultCUDA(A, B, 1);
+    vector<vector<int>> res_from_CPU = MatrixMultiplyCPU(A, B, n);
+    vector<vector<int>> res_from_GPU = MatrixMultCUDA(A, B, n);
 
     printMatrix(res_from_GPU);
+    printMatrix(res_from_CPU);
 
     return 0;
 }
