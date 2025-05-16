@@ -1,0 +1,52 @@
+# Build artifacts
+/build/
+/bin/
+/obj/
+*.exe
+*.out
+*.a
+*.so
+*.dll
+*.lib
+*.dylib
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+*.cmake
+Makefile
+
+# IDE
+.vs/
+.vscode/
+.idea/
+cmake-build-*/
+
+# Editor temp files
+*.swp
+*.swo
+*~
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Dependencies
+deps/
+ThirdParty/
+conan-build/
+vcpkg_installed/
+
+# Compiler cache and debug
+*.gcno
+*.gcda
+*.ilk
+*.pdb
+*.suo
+*.user
+
+# Logs and test results
+*.log
+test_results/
