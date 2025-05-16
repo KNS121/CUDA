@@ -68,13 +68,13 @@ vector<vector<int>> MatrixMultCUDA(const vector<vector<int>>& A, const vector<ve
     cudaMalloc(&dev_B, n * n * sizeof(int));
     cudaMalloc(&dev_res, n * n * sizeof(int));
 
-    cudaMemcpy(&dev_A, one_dim_array_A, n * n * sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(&dev_B, one_dim_array_B, n * n * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(dev_A, one_dim_array_A, n * n * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(dev_B, one_dim_array_B, n * n * sizeof(int), cudaMemcpyHostToDevice);
 
     MatrixMultplyGPU << <1, 1 >> > (dev_A, dev_B, dev_res, n);
 
     // obratno
-    cudaMemcpy(dev_res, one_dim_array_reuslt, n * n * sizeof(int), cudaMemcpyDeviceToHost);
+    cudaMemcpy(one_dim_array_reuslt, dev_res, n * n * sizeof(int), cudaMemcpyDeviceToHost);
    
     vector<vector<int>> resultMatrix(n, vector<int>(n, 0));
 
@@ -85,6 +85,11 @@ vector<vector<int>> MatrixMultCUDA(const vector<vector<int>>& A, const vector<ve
     }
 
     // pochistim
+
+    delete[] one_dim_array_A;
+    delete[] one_dim_array_B;
+    delete[] one_dim_array_reuslt;
+
     cudaFree(dev_A);
     cudaFree(dev_B);
     cudaFree(dev_res);
@@ -107,7 +112,11 @@ int main() {
     vector<vector<int>> res_from_CPU = MatrixMultiplyCPU(A, B, n);
     vector<vector<int>> res_from_GPU = MatrixMultCUDA(A, B, n);
 
+
+    cout << "GPU result:\n";
     printMatrix(res_from_GPU);
+    
+    cout << "CPU result:\n";
     printMatrix(res_from_CPU);
 
     return 0;
