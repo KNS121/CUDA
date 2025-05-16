@@ -29,49 +29,80 @@ void printMatrix(const vector<vector<int>>& matrix) {
 }
 
 
-//__global__ void MatrixMultiplyGPU(const int *a, )
+__global__ void MatrixMultplyGPU(int* A, int* B, int* C, int n) {
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
 
-
-__global__ void check_sum(int* a, int* b, int* res) {
-    *res = *a + *b;
+    if (row < n && col < n) {
+        int sum = 0;
+        for (int k = 0; k < n; k++) {
+            sum += A[row * n + k] * B[k * n + col];
+        }
+        C[row * n + col] = sum;
+    }
 }
 
 
 
+vector<vector<int>> MatrixMultCUDA(const vector<vector<int>>& A, const vector<vector<int>>& B, const int n) {
+
+    //one dim arrays
+    int* one_dim_array_A = new int[n * n];
+    int* one_dim_array_B = new int[n * n];
+    int* one_dim_array_reuslt = new int[n * n];
+
+    for (int i = 0; i < n; ++i) {
+        for (int j = 0; j < n; ++j) {
+            one_dim_array_A[i * n + j] = A[i][j];
+            one_dim_array_B[i * n + j] = B[i][j];
+        }
+    }
+
+
+    // go to CUDA
+    int* dev_A;
+    int* dev_B;
+    int* dev_res;
+
+    cudaMemcpy(dev_A, one_dim_array_A, n * n * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(dev_B, one_dim_array_B, n * n * sizeof(int), cudaMemcpyHostToDevice);
+
+
+    MatrixMultplyGPU << <1, 1 >> > (dev_A, dev_B, dev_res, n);
+
+    // obratno
+    cudaMemcpy(dev_res, one_dim_array_reuslt, n * n * sizeof(int), cudaMemcpyDeviceToHost);
+   
+    vector<vector<int>> resultMatrix(N, vector<int>(N, 0));
+
+    for (int i = 0; i < n; ++i) {
+        for (int j = 0; j < n; ++j) {
+            resultMatrix[i][j] = one_dim_array_reuslt[i * n + j];
+        }
+    }
+
+    // pochistim
+    cudaFree(dev_A);
+    cudaFree(dev_B);
+    cudaFree(dev_res);
+
+    
+    return resultMatrix;
+}
+
+
 int main() {
 
-    vector<vector<int>> A(N, vector<int>(N));
-    vector<vector<int>> B(N, vector<int>(N));
+    vector<vector<int>> A(1, vector<int>(1));
+    vector<vector<int>> B(1, vector<int>(1));
 
     fillMatrix(A);
     fillMatrix(B);
 
+    vector<vector<int>> res_from_CPU = MatrixMultiplyCPU(A, B, 1);
+    vector<vector<int>> res_from_GPU = MatrixMultCUDA(A, B, 1);
 
-    int a = 1;
-    int b = 2;
-    int res;
-
-    int* dev_a;
-    int* dev_b; 
-    int* dev_res;
-
-    cudaMalloc((void**)&dev_a, sizeof(int));
-    cudaMalloc((void**)&dev_b, sizeof(int));
-    cudaMalloc((void**)&dev_res, sizeof(int));
-
-    cudaMemcpy(dev_a, &a, sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(dev_b, &b, sizeof(int), cudaMemcpyHostToDevice);
-
-    check_sum << <1, 1 >> > (dev_a, dev_b, dev_res);
-
-    cudaMemcpy(&res, dev_res, sizeof(int), cudaMemcpyDeviceToHost);
-
-    printf("%d + %d = %d\n", a, b, res);
-
-    cudaFree(dev_a);
-    cudaFree(dev_b);
-    cudaFree(dev_res);
-
+    printMatrix(res_from_GPU);
 
     return 0;
 }
