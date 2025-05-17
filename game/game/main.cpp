@@ -2,15 +2,20 @@
 #include <vector>
 #include <cstdlib>
 
+
 struct Particle {
     float x, y;
     float vx, vy;
     int type;
+    //float radius;
 };
 
+
+const float PARTICLE_RADIUS = 0.04f;
 const int NUM_PARTICLES = 8;
 std::vector<Particle> particles;
 
+const float min_distance = 2 * PARTICLE_RADIUS;
 
 
 // init chasticy
@@ -23,6 +28,7 @@ void initParticles() {
         p.vx = (rand() % 100 - 100) / 10000.0f;
         p.vy = (rand() % 100 - 100) / 10000.0f;
         p.type = rand() % 2;
+        //p.radius = 
 
     }
 }
@@ -30,40 +36,31 @@ void initParticles() {
 
 void ottalkivanie_dvuh(Particle& particle_1, Particle& particle_2) {
 
-    // uprugo: delta_p = 2 x delta_V_norm; delta_V_norm = n_vector x delta_V_vector;
-    // delta_V_vector = ( V1_vector - V_2_vector ) = ( V_1_x - V_2_x + V_1_y - V_2_y );
-    // n_vector = n_x*i + n_y*j;
-    // n_x(or y) = dx(or y) / distance_between_centers;
-    // delta_V_norm = n_x*(V_1_x - V_2_x) + n_y*(V_1_y - V_2_y);
-    // togda delta_p = 2 x [ n_x*(V_1_x - V_2_x) + n_y*(V_1_y - V_2_y) ];
-    // V_1_x_final = V_1_x + delta_p x n_x, V_1_y_final = V_1_y + delta_p x n_y;
-    // V_2_x_final = V_2_x - delta_p x n_x, V_2_y_final = V_2_y - delta_p x n_y;
 
-        // rasstoyaniye
     float dx = particle_1.x - particle_2.x;
     float dy = particle_1.y - particle_2.y;
 
     float distance_between_centers = sqrtf(dx * dx + dy * dy);
 
-    float n_x = dx / distance_between_centers;
-    float n_y = dy / distance_between_centers;
+    if (distance_between_centers < min_distance && distance_between_centers > 0) {
 
-    //float delta_p = 2.0 * (n_x * (particle_1.vx - particle_2.vx) + n_y * (particle_1.vy - particle_2.vy));
-
-    ///float delta_p;
-    //float delta_V_norm;
-
-    float delta_V_norm_x = (particle_1.vx - particle_2.vx);
-    float delta_V_norm_y = (particle_1.vy - particle_2.vy);
-
-    float delta_V_norm = n_x*delta_V_norm_x + n_y*delta_V_norm_y;
-    //delta_p = delta_V_norm;
+        float n_x = dx / distance_between_centers;
+        float n_y = dy / distance_between_centers;
 
 
+        float overlap = 0.5f * (min_distance - distance_between_centers);
 
-    //float _vremennaya_v = particle_1.vx;
+        particle_1.x -= overlap * n_x;
+        particle_1.y -= overlap * n_y;
+        particle_2.x += overlap * n_x;
+        particle_2.y += overlap * n_y;
 
-    if (delta_V_norm < 0) {
+        float delta_V_norm_x = (particle_1.vx - particle_2.vx);
+        float delta_V_norm_y = (particle_1.vy - particle_2.vy);
+
+        float delta_V_norm = n_x * delta_V_norm_x + n_y * delta_V_norm_y;
+
+        if (delta_V_norm > 0) return;
 
         float imp = -2.0f * delta_V_norm;
 
@@ -71,8 +68,9 @@ void ottalkivanie_dvuh(Particle& particle_1, Particle& particle_2) {
         particle_1.vy += imp * n_y;
         particle_2.vx -= imp * n_x;
         particle_2.vy -= imp * n_y;
-    }
 
+
+    }
 }
 
 
@@ -85,21 +83,28 @@ void many_ootalkivaniya() {
             Particle& particle_1 = particles[i];
             Particle& particle_2 = particles[j];
 
-            float min_distance = 0.05f;
-
             if (particle_1.type == particle_2.type) continue;
 
-            float dx = particle_1.x - particle_2.x;
-            float dy = particle_1.y - particle_2.y;
+            ottalkivanie_dvuh(particle_1, particle_2);
 
-            float distance = sqrtf(dx * dx + dy * dy);
-
-            if (distance < min_distance) {
-                ottalkivanie_dvuh(particle_1, particle_2);
-            }
         }
     }
 }
+
+
+
+
+void drawCircle(float x, float y, float r) {
+    glBegin(GL_TRIANGLE_FAN);
+    glVertex2f(x, y);
+    for (int i = 0; i <= 32; ++i) {
+        float angle = 2.0f * 3.1415 * i / 32;
+        glVertex2f(x + cos(angle) * r, y + sin(angle) * r);
+    }
+    glEnd();
+}
+
+
 
 
 // +coord x +coord y, proverka na predely ekrana
@@ -109,8 +114,8 @@ void updateParticles() {
     for (auto& p : particles) {
         p.x += p.vx;
         p.y += p.vy;
-        if (p.x < -1.0f || p.x > 1.0f) p.vx *= -1;
-        if (p.y < -1.0f || p.y > 1.0f) p.vy *= -1;
+        if (p.x - PARTICLE_RADIUS < -1.0f || p.x + PARTICLE_RADIUS > 1.0f) p.vx *= -1;
+        if (p.y - PARTICLE_RADIUS < -1.0f || p.y + PARTICLE_RADIUS > 1.0f) p.vy *= -1;
     }
 
     // mezghdu soboy
@@ -122,8 +127,8 @@ void updateParticles() {
 void display() {
     glClear(GL_COLOR_BUFFER_BIT);
 
-    glPointSize(40.0f);
-    glBegin(GL_POINTS);
+    //glPointSize(40.0f);
+    //glBegin(GL_POINTS);
 
     for (const auto& p : particles) {
 
@@ -133,7 +138,7 @@ void display() {
         }
         else glColor3f(0.0f, 0.0f, 1.0f);
 
-        glVertex2f(p.x, p.y);
+        drawCircle(p.x, p.y, PARTICLE_RADIUS);
     }
 
 
