@@ -17,6 +17,13 @@ int winWidth = 1024, winHeight = 1024;
 CudaParams cudaParams;
 float deltaTime = 0.016f;
 
+__constant__ float particle_radius;
+__constant__ float basket_left;
+__constant__ float basket_right;
+__constant__ float basket_bottom;
+__constant__ float basket_top;
+__constant__ float basket_thickness;
+
 // for cuda
 __device__ int calcGridHash(float x, float y) {
     int gridX = static_cast<int>((x + 1.0f) * (GRID_SIZE / (2.0f * d_world_size)));
@@ -42,28 +49,101 @@ __global__ void setupGrid(int* cellIndices, int* cellStarts, int* cellEnds, int 
 
     // start yacheyki
     if (idx == 0 || currentHash != (cellIndices[idx - 1] >> 16)) {
-        cellStarts[currentHash] = idx; 
+        cellStarts[currentHash] = idx;
     }
 
     // end_yacheyki
     if (idx == numParticles - 1 || currentHash != (cellIndices[idx + 1] >> 16)) {
-        cellEnds[currentHash] = idx + 1; 
+        cellEnds[currentHash] = idx + 1;
     }
 }
 
 __global__ void updateParticles(float* positions_x, float* positions_y,
     float* velocities_x, float* velocities_y,
-    int numParticles, float deltaTime) {
+    int numParticles, float deltaTime)
+{
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= numParticles) return;
 
-    // update pos
+    
+    float prev_x = positions_x[idx];
+    float prev_y = positions_y[idx];
+
+    
     positions_x[idx] += velocities_x[idx] * deltaTime;
     positions_y[idx] += velocities_y[idx] * deltaTime;
 
-    // prik-skok ot kraev
-    if (fabsf(positions_x[idx]) >= 1.0f) velocities_x[idx] *= -1.0f;
-    if (fabsf(positions_y[idx]) >= 1.0f) velocities_y[idx] *= -1.0f;
+    //prik skok s kraev
+    if (fabsf(positions_x[idx]) + particle_radius >= 1.0f) {
+        velocities_x[idx] *= -1.0f;
+        positions_x[idx] = copysignf(1.0f - particle_radius, positions_x[idx]);
+    }
+    if (fabsf(positions_y[idx]) + particle_radius >= 1.0f) {
+        velocities_y[idx] *= -1.0f;
+        positions_y[idx] = copysignf(1.0f - particle_radius, positions_y[idx]);
+    }
+
+
+    const float thickness = basket_thickness;
+    const float left = basket_left;
+    const float right = basket_right;
+    const float bottom = basket_bottom;
+    const float top = basket_top;
+
+
+    // vnutri
+    if (positions_y[idx] >= bottom && positions_y[idx] <= top) {
+        // left
+        if (positions_x[idx] - particle_radius < left + thickness &&
+            prev_x - particle_radius >= left + thickness) {
+            velocities_x[idx] *= -1.0f;
+            positions_x[idx] = left + thickness + particle_radius;
+        }
+        // right
+        if (positions_x[idx] + particle_radius > right - thickness &&
+            prev_x + particle_radius <= right - thickness) {
+            velocities_x[idx] *= -1.0f;
+            positions_x[idx] = right - thickness - particle_radius;
+        }
+    }
+
+    // vne
+    // left
+    const float outer_left = left - thickness;
+    if (positions_x[idx] + particle_radius > outer_left &&
+        positions_x[idx] - particle_radius < outer_left + thickness &&
+        positions_y[idx] >= bottom &&
+        positions_y[idx] <= top) {
+        positions_x[idx] = outer_left - particle_radius;
+        velocities_x[idx] *= -1.0f;
+    }
+
+    // rignt
+    const float outer_right = right + thickness;
+    if (positions_x[idx] - particle_radius < outer_right &&
+        positions_x[idx] + particle_radius > outer_right - thickness &&
+        positions_y[idx] >= bottom &&
+        positions_y[idx] <= top) {
+        positions_x[idx] = outer_right + particle_radius;
+        velocities_x[idx] *= -1.0f;
+    }
+
+    // niz
+    if (positions_x[idx] >= left && positions_x[idx] <= right) {
+        //vnutri niz
+        if (positions_y[idx] - particle_radius < bottom + thickness &&
+            prev_y - particle_radius >= bottom + thickness) {
+            positions_y[idx] = bottom + thickness + particle_radius;
+            velocities_y[idx] *= -1.0f;
+        }
+        //vne niz
+        const float outer_bottom = bottom - thickness;
+        if (positions_y[idx] + particle_radius > outer_bottom &&
+            positions_y[idx] - particle_radius < outer_bottom + thickness) {
+            positions_y[idx] = outer_bottom - particle_radius;
+            velocities_y[idx] *= -1.0f;
+        }
+    }
 }
 
 __global__ void processBlockPrikSkok(
@@ -102,7 +182,7 @@ __global__ void processBlockPrikSkok(
     float delta_vx = 0.0f, delta_vy = 0.0f;
     float delta_x = 0.0f, delta_y = 0.0f;
 
-    
+
     for (int i = 0; i < BLOCK_SIZE; ++i) {
         const int type2 = shared.type[i];
         if (type1 == type2 || i == tid) continue;
@@ -217,9 +297,55 @@ __global__ void processGridPrikSkok(
 __global__ void ClearTexture(cudaSurfaceObject_t surface, int width, int height) {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x < width && y < height) {
-        surf2Dwrite(make_uchar4(0, 0, 0, 255), surface, x * sizeof(uchar4), y);
+    if (x >= width || y >= height) return;
+
+
+    float worldX = (x / (float)width) * 2.0f - 1.0f;
+    float worldY = (y / (float)height) * 2.0f - 1.0f;
+
+    uchar4 color = make_uchar4(0, 0, 0, 255);
+
+
+    const float thickness = basket_thickness;
+    const float left = basket_left;
+    const float right = basket_right;
+    const float bottom = basket_bottom;
+    const float top = basket_top;
+
+
+    // vnutr
+    bool isBasket =
+        // vnutri levaya
+        (fabs(worldX - (left + thickness / 2)) < thickness / 2 &&
+            worldY >= bottom && worldY <= top) ||
+
+        // vnutr pravaya
+        (fabs(worldX - (right - thickness / 2)) < thickness / 2 &&
+            worldY >= bottom && worldY <= top) ||
+
+        // niz vnutri
+        (fabs(worldY - (bottom + thickness / 2)) < thickness / 2 &&
+            worldX >= left && worldX <= right);
+
+    // vnesh
+    isBasket = isBasket ||
+        // vneshn levaya
+        (fabs(worldX - (left - thickness / 2)) < thickness / 2 &&
+            worldY >= bottom && worldY <= top) ||
+
+        // vneshnyaya pravaya
+        (fabs(worldX - (right + thickness / 2)) < thickness / 2 &&
+            worldY >= bottom && worldY <= top) ||
+
+        // vneshnyaya niz
+        (fabs(worldY - (bottom - thickness / 2)) < thickness / 2 &&
+            worldX >= left && worldX <= right);
+
+    if (isBasket) {
+        color = make_uchar4(0, 255, 0, 255);
     }
+
+    surf2Dwrite(color, surface, x * sizeof(uchar4), y);
 }
 
 __global__ void drawParticles(cudaSurfaceObject_t surface,
@@ -297,7 +423,7 @@ void initParticles() {
 }
 
 void display() {
-    
+
     dim3 block(BLOCK_SIZE);
     dim3 grid((numParticles + BLOCK_SIZE - 1) / BLOCK_SIZE);
 
@@ -372,19 +498,19 @@ void display() {
     cudaDeviceSynchronize();
     checkCudaError(cudaGetLastError(), "Collision processing kernel");
 
-    
+
     cudaGraphicsMapResources(1, &cudaParams.cudaResource, 0);
     cudaArray* array;
     cudaGraphicsSubResourceGetMappedArray(&array, cudaParams.cudaResource, 0, 0);
 
-    
+
     cudaResourceDesc resDesc = {};
     resDesc.resType = cudaResourceTypeArray;
     resDesc.res.array.array = array;
     cudaSurfaceObject_t surface;
     cudaCreateSurfaceObject(&surface, &resDesc);
 
-    
+
     dim3 clearBlock(32, 32);
     dim3 clearGrid(
         (winWidth + clearBlock.x - 1) / clearBlock.x,
@@ -394,7 +520,7 @@ void display() {
     cudaDeviceSynchronize();
     checkCudaError(cudaGetLastError(), "Clear texture kernel");
 
-    
+
     drawParticles << <grid, block >> > (
         surface,
         cudaParams.positions_x,
@@ -407,11 +533,11 @@ void display() {
     cudaDeviceSynchronize();
     checkCudaError(cudaGetLastError(), "Draw particles kernel");
 
-    
+
     cudaDestroySurfaceObject(surface);
     cudaGraphicsUnmapResources(1, &cudaParams.cudaResource, 0);
 
-    
+
     glClear(GL_COLOR_BUFFER_BIT);
     glEnable(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, cudaParams.texture);
@@ -426,9 +552,34 @@ void display() {
     glDisable(GL_TEXTURE_2D);
     glutSwapBuffers();
 
-    
+
 
 }
+
+
+
+
+void initBasketParams() {
+   
+    const float h_basket_left = 0.6f; // start x
+    const float h_basket_right = 0.8f; // endx
+    const float h_basket_bottom = 0.7f; // niz
+    const float h_basket_top = 0.8f; //verh
+    const float h_basket_thickness = 0.005f; //toshina
+
+    // copy to videokarta
+    cudaMemcpyToSymbol(basket_left, &h_basket_left, sizeof(float));
+    cudaMemcpyToSymbol(basket_right, &h_basket_right, sizeof(float));
+    cudaMemcpyToSymbol(basket_bottom, &h_basket_bottom, sizeof(float));
+    cudaMemcpyToSymbol(basket_top, &h_basket_top, sizeof(float));
+    cudaMemcpyToSymbol(basket_thickness, &h_basket_thickness, sizeof(float));
+
+    const float h_particle_radius = 0.02f;
+    cudaMemcpyToSymbol(particle_radius, &h_particle_radius, sizeof(float));
+
+    checkCudaError(cudaGetLastError(), "Basket params copy to device");
+}
+
 
 int main(int argc, char** argv) {
     glutInit(&argc, argv);
@@ -438,7 +589,7 @@ int main(int argc, char** argv) {
 
     glewInit();
 
-    
+
     glGenTextures(1, &cudaParams.texture);
     glBindTexture(GL_TEXTURE_2D, cudaParams.texture);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, winWidth, winHeight, 0,
@@ -453,6 +604,7 @@ int main(int argc, char** argv) {
     checkCudaError(err, "Register OpenGL texture");
 
     initCuda();
+    initBasketParams();
     initParticles();
 
     glutDisplayFunc(display);
