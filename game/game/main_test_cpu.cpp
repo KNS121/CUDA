@@ -10,7 +10,7 @@ struct Particle {
 };
 
 const float PARTICLE_RADIUS = 0.04f;
-const int NUM_PARTICLES = 8;
+const int NUM_PARTICLES = 64;
 std::vector<Particle> particles;
 
 const float min_distance = 2 * PARTICLE_RADIUS;
@@ -45,7 +45,7 @@ void ottalkivanie_dvuh(Particle& particle_1, Particle& particle_2) {
         float n_y = dy / distance_between_centers;
 
 
-        float overlap = 0.5f * (min_distance - distance_between_centers);
+        float overlap = 0.2f * (min_distance - distance_between_centers);
 
         particle_1.x -= overlap * n_x;
         particle_1.y -= overlap * n_y;
@@ -59,7 +59,7 @@ void ottalkivanie_dvuh(Particle& particle_1, Particle& particle_2) {
 
         if (delta_V_norm > 0) return;
 
-        float imp = -2.0f * delta_V_norm;
+        float imp = -1.0f * delta_V_norm;
 
         particle_1.vx += imp * n_x;
         particle_1.vy += imp * n_y;

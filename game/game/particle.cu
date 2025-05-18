@@ -3,8 +3,10 @@
 #include <GL/freeglut.h>
 #include <cuda_gl_interop.h>
 #include <surface_functions.h>
-
+#include <cuda_runtime.h>
 #include <cstdio>
+#include <math.h>
+
 
 struct CudaResources {
     cudaGraphicsResource* cudaResource = nullptr;
@@ -22,6 +24,9 @@ int winWidth = 720, winHeight = 720;
 Particle* d_particles = nullptr;
 
 float deltaTime = 0.016f;
+
+
+const float min_distance = 0.1f;
 
 __global__ void DrawParticles(cudaSurfaceObject_t surface, Particle* particles,
     int numParticles, int width, int height) {
@@ -63,9 +68,70 @@ __global__ void UpdateParticles(Particle* particles, int numParticles, float del
     particles[idx].y += particles[idx].vy * deltaTime;
 
 
-    if (particles[idx].x < -1.0f || particles[idx].x > 1.0f) particles[idx].vx *= -1;
-    if (particles[idx].y < -1.0f || particles[idx].y > 1.0f) particles[idx].vy *= -1;
+    if (particles[idx].x - PARTICLE_RADIUS < -1.0f || particles[idx].x + PARTICLE_RADIUS > 1.0f) particles[idx].vx *= -1;
+    if (particles[idx].y - PARTICLE_RADIUS < -1.0f || particles[idx].y + PARTICLE_RADIUS > 1.0f) particles[idx].vy *= -1;
 }
+
+
+__device__ void ottalkivanie_dvuh(Particle& particle_1, Particle& particle_2, float min_distance) {
+    float dx = particle_1.x - particle_2.x;
+    float dy = particle_1.y - particle_2.y;
+
+    float distance_between_centers = sqrtf(dx * dx + dy * dy);
+
+    if (distance_between_centers < min_distance && distance_between_centers > 0) {
+        float n_x = dx / distance_between_centers;
+        float n_y = dy / distance_between_centers;
+
+        float overlap = 0.5f * (min_distance - distance_between_centers);
+
+        particle_1.x -= overlap * n_x;
+        particle_1.y -= overlap * n_y;
+        particle_2.x += overlap * n_x;
+        particle_2.y += overlap * n_y;
+
+        float delta_V_norm_x = (particle_1.vx - particle_2.vx);
+        float delta_V_norm_y = (particle_1.vy - particle_2.vy);
+
+        float delta_V_norm = n_x * delta_V_norm_x + n_y * delta_V_norm_y;
+
+        if (delta_V_norm > 0) return;
+
+        float imp = -1.0f * delta_V_norm;
+
+        particle_1.vx += imp * n_x;
+        particle_1.vy += imp * n_y;
+        particle_2.vx -= imp * n_x;
+        particle_2.vy -= imp * n_y;
+    }
+}
+
+__global__ void many_ootalkivaniya(Particle* particles, int numParticles, float min_distance) {
+    __shared__ Particle sharedParticles[MAX_PARTICLES];
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    // shared
+    if (idx < numParticles) {
+        sharedParticles[idx] = particles[idx];
+    }
+    __syncthreads();
+
+    // pary
+    if (idx < numParticles) {
+        for (int j = idx + 1; j < numParticles; ++j) {
+            if (sharedParticles[idx].type != sharedParticles[j].type) {
+                ottalkivanie_dvuh(sharedParticles[idx], sharedParticles[j], min_distance);
+            }
+        }
+    }
+    __syncthreads();
+
+    // update global memry
+    if (idx < numParticles) {
+        particles[idx] = sharedParticles[idx];
+    }
+}
+
 
 
 
@@ -100,8 +166,10 @@ void initGL(int argc, char** argv) {
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 }
 
+
+
 void initParticles() {
-    numParticles = 8;
+    numParticles = 16;
     for (int i = 0; i < numParticles; ++i) {
         particles[i].x = (rand() % 1000) / 500.0f - 1.0f;
         particles[i].y = (rand() % 1000) / 500.0f - 1.0f;
@@ -126,23 +194,26 @@ void display() {
     dim3 blockSize(256);
     dim3 gridSize((numParticles + blockSize.x - 1) / blockSize.x);
 
-    UpdateParticles <<<gridSize, blockSize>>>(d_particles, numParticles, deltaTime);
+    // Handle particle repulsion
+    many_ootalkivaniya << <gridSize, blockSize >> > (d_particles, numParticles, min_distance);
     cudaDeviceSynchronize();
+
+    UpdateParticles << <gridSize, blockSize >> > (d_particles, numParticles, deltaTime);
+    cudaDeviceSynchronize();
+
     // chistim
     dim3 clearBlocks(32, 32);
     dim3 clearGrid((winWidth + 31) / 32, (winHeight + 31) / 32);
-    ClearTexture <<<clearGrid, clearBlocks>>>(cudaRes.surface, winWidth, winHeight);
+    ClearTexture << <clearGrid, clearBlocks >> > (cudaRes.surface, winWidth, winHeight);
     cudaDeviceSynchronize();
 
     // risovlaka
-    DrawParticles <<<gridSize, blockSize>>>(cudaRes.surface, d_particles, numParticles, winWidth, winHeight);
+    DrawParticles << <gridSize, blockSize >> > (cudaRes.surface, d_particles, numParticles, winWidth, winHeight);
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
         printf("CUDA Error: %s\n", cudaGetErrorString(err));
     }
     cudaDeviceSynchronize();
-
-
 
     // osvobodim resursy
     cudaDestroySurfaceObject(cudaRes.surface);
