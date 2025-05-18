@@ -29,6 +29,22 @@ __constant__ float basket_thickness;
 
 __constant__ float gravity;
 
+__constant__ float max_speed;
+
+
+__constant__ float segment_x;
+__constant__ float segment_y;
+__constant__ float segment_length;
+__constant__ float segment_thickness;
+
+float h_segment_x = 0.0f;
+float h_segment_y = 0.0f;
+const float h_segment_length = 0.4f;
+const float h_segment_thickness = 0.02f;
+float move_speed = 0.2f;
+
+void keyboard(unsigned char key, int x, int y);
+
 // for cuda
 __device__ int calcGridHash(float x, float y) {
     int gridX = static_cast<int>((x + 1.0f) * (GRID_SIZE / (2.0f * d_world_size)));
@@ -75,17 +91,25 @@ __global__ void updateParticles(float* positions_x, float* positions_y,
     float prev_x = positions_x[idx];
     float prev_y = positions_y[idx];
 
+    float current_speed = sqrtf(velocities_x[idx] * velocities_x[idx] +
+        velocities_y[idx] * velocities_y[idx]);
+    if (current_speed > max_speed) {
+        float ratio = max_speed / current_speed;
+        velocities_x[idx] *= ratio;
+        velocities_y[idx] *= ratio;
+    }
+
     
     positions_x[idx] += velocities_x[idx] * deltaTime;
     positions_y[idx] += velocities_y[idx] * deltaTime;
 
     //prik skok s kraev
     if (fabsf(positions_x[idx]) + particle_radius >= 1.0f) {
-        velocities_x[idx] *= -0.5f;
+        velocities_x[idx] *= -1.0f;
         positions_x[idx] = copysignf(1.0f - particle_radius, positions_x[idx]);
     }
     if (fabsf(positions_y[idx]) + particle_radius >= 1.0f) {
-        velocities_y[idx] *= -0.5f;
+        velocities_y[idx] *= -1.0f;
         positions_y[idx] = copysignf(1.0f - particle_radius, positions_y[idx]);
     }
 
@@ -158,6 +182,39 @@ __global__ void updateParticles(float* positions_x, float* positions_y,
         positions_y[idx] <= basket_top)
     {
         active[idx] = 0;
+    }
+
+
+    float seg_left = segment_x - segment_length / 2;
+    float seg_right = segment_x + segment_length / 2;
+    float seg_bottom = segment_y - segment_thickness / 2;
+    float seg_top = segment_y + segment_thickness / 2;
+
+    // my otrezok
+    if (positions_x[idx] >= seg_left - particle_radius &&
+        positions_x[idx] <= seg_right + particle_radius &&
+        positions_y[idx] >= seg_bottom - particle_radius &&
+        positions_y[idx] <= seg_top + particle_radius)
+    {
+   
+        if (prev_y > seg_top && positions_y[idx] <= seg_top) {
+            velocities_y[idx] *= -1.1f;
+            positions_y[idx] = seg_top + particle_radius;
+        }
+        else if (prev_y < seg_bottom && positions_y[idx] >= seg_bottom) {
+            velocities_y[idx] *= -1.1f;
+            positions_y[idx] = seg_bottom - particle_radius;
+        }
+
+        // horizontal
+        if (prev_x < seg_left && positions_x[idx] >= seg_left) {
+            velocities_x[idx] *= -1.1f;
+            positions_x[idx] = seg_left - particle_radius;
+        }
+        else if (prev_x > seg_right && positions_x[idx] <= seg_right) {
+            velocities_x[idx] *= -1.1f;
+            positions_x[idx] = seg_right + particle_radius;
+        }
     }
 
 }
@@ -361,6 +418,18 @@ __global__ void ClearTexture(cudaSurfaceObject_t surface, int width, int height)
         color = make_uchar4(0, 255, 0, 255);
     }
 
+    //surf2Dwrite(color, surface, x * sizeof(uchar4), y);
+
+    float seg_left = segment_x - segment_length / 2;
+    float seg_right = segment_x + segment_length / 2;
+    float seg_bottom = segment_y - segment_thickness / 2;
+    float seg_top = segment_y + segment_thickness / 2;
+
+    if (worldX >= seg_left && worldX <= seg_right &&
+        worldY >= seg_bottom && worldY <= seg_top) {
+        color = make_uchar4(255, 255, 255, 255); // Белый цвет
+    }
+
     surf2Dwrite(color, surface, x * sizeof(uchar4), y);
 }
 
@@ -413,6 +482,11 @@ void initCuda() {
     checkCudaError(cudaMalloc(&cudaParams.cellStarts, GRID_SIZE * GRID_SIZE * sizeof(int)), "Alloc cell starts");
     checkCudaError(cudaMalloc(&cudaParams.cellEnds, GRID_SIZE * GRID_SIZE * sizeof(int)), "Alloc cell ends");
     checkCudaError(cudaMalloc(&cudaParams.active, MAX_PARTICLES * sizeof(int)), "Alloc active");
+
+    cudaMemcpyToSymbol(segment_x, &h_segment_x, sizeof(float));
+    cudaMemcpyToSymbol(segment_y, &h_segment_y, sizeof(float));
+    cudaMemcpyToSymbol(segment_length, &h_segment_length, sizeof(float));
+    cudaMemcpyToSymbol(segment_thickness, &h_segment_thickness, sizeof(float));
 }
 
 
@@ -622,14 +696,39 @@ void display() {
 }
 
 
+void keyboard(unsigned char key, int x, int y) {
+    switch (key) {
+    case 'w':
+        h_segment_y += move_speed;
+        break;
+    case 's':
+        h_segment_y -= move_speed;
+        break;
+    case 'a':
+        h_segment_x -= move_speed;
+        break;
+    case 'd':
+        h_segment_x += move_speed;
+        break;
+    }
+    // ne nado za okno ubegat'
+    h_segment_x = max(-1.0f + h_segment_length / 2, min(1.0f - h_segment_length / 2, h_segment_x));
+    h_segment_y = max(-1.0f + h_segment_thickness / 2, min(1.0f - h_segment_thickness / 2, h_segment_y));
+
+
+    cudaMemcpyToSymbol(segment_x, &h_segment_x, sizeof(float));
+    cudaMemcpyToSymbol(segment_y, &h_segment_y, sizeof(float));
+
+    glutPostRedisplay();
+}
 
 
 void initBasketParams() {
    
-    const float h_basket_left = 0.6f; // start x
-    const float h_basket_right = 0.8f; // endx
-    const float h_basket_bottom = 0.7f; // niz
-    const float h_basket_top = 0.8f; //verh
+    const float h_basket_left = 0.4f; // start x
+    const float h_basket_right = 0.9f; // endx
+    const float h_basket_bottom = 0.5f; // niz
+    const float h_basket_top = 0.6f; //verh
     const float h_basket_thickness = 0.005f; //toshina
 
     // copy to videokarta
@@ -642,9 +741,11 @@ void initBasketParams() {
     const float h_particle_radius = 0.02f;
     cudaMemcpyToSymbol(particle_radius, &h_particle_radius, sizeof(float));
 
-    const float h_gravity = -2.0f;
+    const float h_gravity = -1.0f;
     cudaMemcpyToSymbol(gravity, &h_gravity, sizeof(float));
 
+    const float h_max_speed = 3.0f;
+    cudaMemcpyToSymbol(max_speed, &h_max_speed, sizeof(float));
 
     checkCudaError(cudaGetLastError(), "Basket params copy to device");
 }
@@ -675,7 +776,7 @@ int main(int argc, char** argv) {
     initCuda();
     initBasketParams();
     initParticles();
-
+    glutKeyboardFunc(keyboard);
     glutDisplayFunc(display);
     glutIdleFunc([]() { glutPostRedisplay(); });
     glutMainLoop();
