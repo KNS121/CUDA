@@ -55,6 +55,19 @@ __global__ void ClearTexture(cudaSurfaceObject_t surface, int width, int height)
 }
 
 
+__global__ void UpdateParticles(Particle* particles, int numParticles, float deltaTime) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= numParticles) return;
+
+    particles[idx].x += particles[idx].vx * deltaTime;
+    particles[idx].y += particles[idx].vy * deltaTime;
+
+
+    if (particles[idx].x < -1.0f || particles[idx].x > 1.0f) particles[idx].vx *= -1;
+    if (particles[idx].y < -1.0f || particles[idx].y > 1.0f) particles[idx].vy *= -1;
+}
+
+
 
 void initGL(int argc, char** argv) {
     glutInit(&argc, argv);
@@ -113,14 +126,16 @@ void display() {
     dim3 blockSize(256);
     dim3 gridSize((numParticles + blockSize.x - 1) / blockSize.x);
 
+    UpdateParticles <<<gridSize, blockSize>>>(d_particles, numParticles, deltaTime);
+    cudaDeviceSynchronize();
     // chistim
     dim3 clearBlocks(32, 32);
     dim3 clearGrid((winWidth + 31) / 32, (winHeight + 31) / 32);
-    ClearTexture << <clearGrid, clearBlocks >> > (cudaRes.surface, winWidth, winHeight);
+    ClearTexture <<<clearGrid, clearBlocks>>>(cudaRes.surface, winWidth, winHeight);
     cudaDeviceSynchronize();
 
     // risovlaka
-    DrawParticles << <gridSize, blockSize >> > (cudaRes.surface, d_particles, numParticles, winWidth, winHeight);
+    DrawParticles <<<gridSize, blockSize>>>(cudaRes.surface, d_particles, numParticles, winWidth, winHeight);
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
         printf("CUDA Error: %s\n", cudaGetErrorString(err));
