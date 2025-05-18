@@ -28,6 +28,7 @@ struct CudaParams {
     float* velocities_x = nullptr;
     float* velocities_y = nullptr;
     int* types = nullptr;
+    int* active;
     int* cellIndices = nullptr;
     int* cellStarts = nullptr;
     int* cellEnds = nullptr;

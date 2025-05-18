@@ -9,6 +9,9 @@
 #include <vector>
 using namespace std;
 
+#include <thrust/remove.h>
+#include <thrust/execution_policy.h>
+
 
 __constant__ float d_world_size = 2.0f;
 const float min_distance = 0.05f;
@@ -60,11 +63,10 @@ __global__ void setupGrid(int* cellIndices, int* cellStarts, int* cellEnds, int 
 
 __global__ void updateParticles(float* positions_x, float* positions_y,
     float* velocities_x, float* velocities_y,
-    int numParticles, float deltaTime)
+    int numParticles, float deltaTime, int* active)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= numParticles) return;
-
+    if (idx >= numParticles || !active[idx]) return;
     
     float prev_x = positions_x[idx];
     float prev_y = positions_y[idx];
@@ -75,11 +77,11 @@ __global__ void updateParticles(float* positions_x, float* positions_y,
 
     //prik skok s kraev
     if (fabsf(positions_x[idx]) + particle_radius >= 1.0f) {
-        velocities_x[idx] *= -1.0f;
+        velocities_x[idx] *= -0.9f;
         positions_x[idx] = copysignf(1.0f - particle_radius, positions_x[idx]);
     }
     if (fabsf(positions_y[idx]) + particle_radius >= 1.0f) {
-        velocities_y[idx] *= -1.0f;
+        velocities_y[idx] *= -0.9f;
         positions_y[idx] = copysignf(1.0f - particle_radius, positions_y[idx]);
     }
 
@@ -96,13 +98,13 @@ __global__ void updateParticles(float* positions_x, float* positions_y,
         // left
         if (positions_x[idx] - particle_radius < left + thickness &&
             prev_x - particle_radius >= left + thickness) {
-            velocities_x[idx] *= -1.0f;
+            velocities_x[idx] *= -0.9f;
             positions_x[idx] = left + thickness + particle_radius;
         }
         // right
         if (positions_x[idx] + particle_radius > right - thickness &&
             prev_x + particle_radius <= right - thickness) {
-            velocities_x[idx] *= -1.0f;
+            velocities_x[idx] *= -0.9f;
             positions_x[idx] = right - thickness - particle_radius;
         }
     }
@@ -115,7 +117,7 @@ __global__ void updateParticles(float* positions_x, float* positions_y,
         positions_y[idx] >= bottom &&
         positions_y[idx] <= top) {
         positions_x[idx] = outer_left - particle_radius;
-        velocities_x[idx] *= -1.0f;
+        velocities_x[idx] *= -0.9f;
     }
 
     // rignt
@@ -125,7 +127,7 @@ __global__ void updateParticles(float* positions_x, float* positions_y,
         positions_y[idx] >= bottom &&
         positions_y[idx] <= top) {
         positions_x[idx] = outer_right + particle_radius;
-        velocities_x[idx] *= -1.0f;
+        velocities_x[idx] *= -0.9f;
     }
 
     // niz
@@ -134,16 +136,26 @@ __global__ void updateParticles(float* positions_x, float* positions_y,
         if (positions_y[idx] - particle_radius < bottom + thickness &&
             prev_y - particle_radius >= bottom + thickness) {
             positions_y[idx] = bottom + thickness + particle_radius;
-            velocities_y[idx] *= -1.0f;
+            velocities_y[idx] *= -0.9f;
         }
         //vne niz
         const float outer_bottom = bottom - thickness;
         if (positions_y[idx] + particle_radius > outer_bottom &&
             positions_y[idx] - particle_radius < outer_bottom + thickness) {
             positions_y[idx] = outer_bottom - particle_radius;
-            velocities_y[idx] *= -1.0f;
+            velocities_y[idx] *= -0.9f;
         }
     }
+
+    // korzina ubivaet
+    if (positions_x[idx] >= basket_left &&
+        positions_x[idx] <= basket_right &&
+        positions_y[idx] >= basket_bottom &&
+        positions_y[idx] <= basket_top)
+    {
+        active[idx] = 0;
+    }
+
 }
 
 __global__ void processBlockPrikSkok(
@@ -199,7 +211,7 @@ __global__ void processBlockPrikSkok(
 
             if (relVel >= 0) continue;
 
-            const float impulse = -1.0f * relVel;
+            const float impulse = -0.9f * relVel;
             delta_vx += impulse * nx;
             delta_vy += impulse * ny;
 
@@ -270,7 +282,7 @@ __global__ void processGridPrikSkok(
 
                     if (relVel >= 0) continue;
 
-                    const float impulse = -1.0f * relVel;
+                    const float impulse = -0.9f * relVel;
                     delta_vx += impulse * nx;
                     delta_vy += impulse * ny;
 
@@ -396,7 +408,7 @@ void initCuda() {
     checkCudaError(cudaMalloc(&cudaParams.cellIndices, MAX_PARTICLES * sizeof(int)), "Alloc cell indices");
     checkCudaError(cudaMalloc(&cudaParams.cellStarts, GRID_SIZE * GRID_SIZE * sizeof(int)), "Alloc cell starts");
     checkCudaError(cudaMalloc(&cudaParams.cellEnds, GRID_SIZE * GRID_SIZE * sizeof(int)), "Alloc cell ends");
-
+    checkCudaError(cudaMalloc(&cudaParams.active, MAX_PARTICLES * sizeof(int)), "Alloc active");
 }
 
 
@@ -420,13 +432,17 @@ void initParticles() {
     cudaMemcpy(cudaParams.velocities_x, vel_x.data(), numParticles * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(cudaParams.velocities_y, vel_y.data(), numParticles * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(cudaParams.types, types.data(), numParticles * sizeof(int), cudaMemcpyHostToDevice);
+ 
+    std::vector<int> activeHost(numParticles, 1);
+
+    cudaMemcpy(cudaParams.active, activeHost.data(), numParticles * sizeof(int), cudaMemcpyHostToDevice);
+
 }
 
 void display() {
-
+    
     dim3 block(BLOCK_SIZE);
     dim3 grid((numParticles + BLOCK_SIZE - 1) / BLOCK_SIZE);
-
     // upldate
     updateParticles << <grid, block >> > (
         cudaParams.positions_x,
@@ -434,7 +450,8 @@ void display() {
         cudaParams.velocities_x,
         cudaParams.velocities_y,
         numParticles,
-        deltaTime
+        deltaTime,
+        cudaParams.active
         );
     cudaDeviceSynchronize();
     checkCudaError(cudaGetLastError(), "Update particles kernel");
@@ -498,11 +515,51 @@ void display() {
     cudaDeviceSynchronize();
     checkCudaError(cudaGetLastError(), "Collision processing kernel");
 
+    // delete
+    thrust::device_ptr<float> d_pos_x(cudaParams.positions_x);
+    thrust::device_ptr<float> d_pos_y(cudaParams.positions_y);
+    thrust::device_ptr<float> d_vel_x(cudaParams.velocities_x);
+    thrust::device_ptr<float> d_vel_y(cudaParams.velocities_y);
+    thrust::device_ptr<int> d_types(cudaParams.types);
+    thrust::device_ptr<int> d_active(cudaParams.active);
+
+    auto begin = thrust::make_zip_iterator(
+        thrust::make_tuple(d_pos_x, d_pos_y, d_vel_x, d_vel_y, d_types, d_active) //ediniy array from many arrays and parameters
+    );
+    auto end = begin + numParticles;
+
+    // nado vse active 0 -> v konec
+    auto new_end = thrust::remove_if(
+        thrust::cuda::par,
+        begin,
+        end,
+        [] __device__(const thrust::tuple<float, float, float, float, int, int>&t) {
+        return thrust::get<5>(t) == 0; // 5-iy element - active
+    }
+    );
+    numParticles = new_end - begin;
+
+    // recreate grid
+    dim3 blockSort(BLOCK_SIZE);
+    dim3 gridSort((numParticles + BLOCK_SIZE - 1) / BLOCK_SIZE);
+
+    sortParticles << <gridSort, blockSort >> > (
+        cudaParams.positions_x,
+        cudaParams.positions_y,
+        cudaParams.cellIndices,
+        numParticles
+        );
+    cudaDeviceSynchronize();
+
+    thrust::sort(
+        thrust::device_ptr<int>(cudaParams.cellIndices),
+        thrust::device_ptr<int>(cudaParams.cellIndices + numParticles)
+    );
+
 
     cudaGraphicsMapResources(1, &cudaParams.cudaResource, 0);
     cudaArray* array;
     cudaGraphicsSubResourceGetMappedArray(&array, cudaParams.cudaResource, 0, 0);
-
 
     cudaResourceDesc resDesc = {};
     resDesc.resType = cudaResourceTypeArray;
@@ -518,7 +575,6 @@ void display() {
     );
     ClearTexture << <clearGrid, clearBlock >> > (surface, winWidth, winHeight);
     cudaDeviceSynchronize();
-    checkCudaError(cudaGetLastError(), "Clear texture kernel");
 
 
     drawParticles << <grid, block >> > (
@@ -531,7 +587,6 @@ void display() {
         winHeight
         );
     cudaDeviceSynchronize();
-    checkCudaError(cudaGetLastError(), "Draw particles kernel");
 
 
     cudaDestroySurfaceObject(surface);
@@ -551,9 +606,6 @@ void display() {
 
     glDisable(GL_TEXTURE_2D);
     glutSwapBuffers();
-
-
-
 }
 
 
