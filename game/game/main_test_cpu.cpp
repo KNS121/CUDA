@@ -7,9 +7,7 @@ struct Particle {
     float x, y;
     float vx, vy;
     int type;
-    //float radius;
 };
-
 
 const float PARTICLE_RADIUS = 0.04f;
 const int NUM_PARTICLES = 8;
@@ -28,7 +26,6 @@ void initParticles() {
         p.vx = (rand() % 100 - 100) / 10000.0f;
         p.vy = (rand() % 100 - 100) / 10000.0f;
         p.type = rand() % 2;
-        //p.radius = 
 
     }
 }
