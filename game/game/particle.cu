@@ -419,11 +419,20 @@ void initParticles() {
     std::vector<float> vel_y(numParticles);
     std::vector<int> types(numParticles);
 
+    const float spawnLeft = -1.0f;
+    const float spawnRight = 0.3f;
+    const float spawnBottom = 0.5f;
+    const float spawnTop = 1.0f;
+
     for (int i = 0; i < numParticles; ++i) {
-        pos_x[i] = (rand() % 2000) / 1000.0f - 1.0f;
-        pos_y[i] = (rand() % 2000) / 1000.0f - 1.0f;
-        vel_x[i] = (rand() % 100 - 100) / 500.0f;
-        vel_y[i] = (rand() % 100 - 100) / 500.0f;
+        //spawn
+        pos_x[i] = spawnLeft + static_cast<float>(rand()) / RAND_MAX * (spawnRight - spawnLeft);
+        pos_y[i] = spawnBottom + static_cast<float>(rand()) / RAND_MAX * (spawnTop - spawnBottom);
+
+        // start v vniz vpravo
+        vel_x[i] = (rand() % 100 - 50) / 500.0f; 
+        vel_y[i] = (rand() % 100 - 150) / 500.0f;
+
         types[i] = rand() % 2;
     }
 
