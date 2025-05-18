@@ -27,6 +27,8 @@ __constant__ float basket_bottom;
 __constant__ float basket_top;
 __constant__ float basket_thickness;
 
+__constant__ float gravity;
+
 // for cuda
 __device__ int calcGridHash(float x, float y) {
     int gridX = static_cast<int>((x + 1.0f) * (GRID_SIZE / (2.0f * d_world_size)));
@@ -68,6 +70,8 @@ __global__ void updateParticles(float* positions_x, float* positions_y,
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= numParticles || !active[idx]) return;
     
+    velocities_y[idx] += gravity * deltaTime;
+
     float prev_x = positions_x[idx];
     float prev_y = positions_y[idx];
 
@@ -77,11 +81,11 @@ __global__ void updateParticles(float* positions_x, float* positions_y,
 
     //prik skok s kraev
     if (fabsf(positions_x[idx]) + particle_radius >= 1.0f) {
-        velocities_x[idx] *= -0.9f;
+        velocities_x[idx] *= -0.5f;
         positions_x[idx] = copysignf(1.0f - particle_radius, positions_x[idx]);
     }
     if (fabsf(positions_y[idx]) + particle_radius >= 1.0f) {
-        velocities_y[idx] *= -0.9f;
+        velocities_y[idx] *= -0.5f;
         positions_y[idx] = copysignf(1.0f - particle_radius, positions_y[idx]);
     }
 
@@ -637,6 +641,10 @@ void initBasketParams() {
 
     const float h_particle_radius = 0.02f;
     cudaMemcpyToSymbol(particle_radius, &h_particle_radius, sizeof(float));
+
+    const float h_gravity = -2.0f;
+    cudaMemcpyToSymbol(gravity, &h_gravity, sizeof(float));
+
 
     checkCudaError(cudaGetLastError(), "Basket params copy to device");
 }
