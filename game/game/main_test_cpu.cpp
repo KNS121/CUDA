@@ -91,15 +91,7 @@ void many_ootalkivaniya() {
 
 
 
-void drawCircle(float x, float y, float r) {
-    glBegin(GL_TRIANGLE_FAN);
-    glVertex2f(x, y);
-    for (int i = 0; i <= 32; ++i) {
-        float angle = 2.0f * 3.1415 * i / 32;
-        glVertex2f(x + cos(angle) * r, y + sin(angle) * r);
-    }
-    glEnd();
-}
+
 
 
 
