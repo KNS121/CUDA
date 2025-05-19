@@ -30,9 +30,9 @@ float move_speed = 0.12f;
 
 float h_rect_left = -0.2f;
 float h_rect_right = 0.2f;
-float h_rect_bottom = -0.5f;
-float h_rect_top = -0.3f;
-bool h_rect_exists = true;
+float h_rect_bottom = 0.5f;
+float h_rect_top = 0.7f;
+bool h_rect_exists = false;
 
 void closeWindow(int value) {
     glutDestroyWindow(windowID);
@@ -123,7 +123,7 @@ __global__ void updateParticles(float* positions_x, float* positions_y,
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= numParticles || !active[idx]) return;
-    
+
     velocities_y[idx] += gravity * deltaTime;
 
     float prev_x = positions_x[idx];
@@ -137,7 +137,7 @@ __global__ void updateParticles(float* positions_x, float* positions_y,
         velocities_y[idx] *= ratio;
     }
 
-    
+
     positions_x[idx] += velocities_x[idx] * deltaTime;
     positions_y[idx] += velocities_y[idx] * deltaTime;
 
@@ -206,18 +206,14 @@ __global__ void updateParticles(float* positions_x, float* positions_y,
         }
         //vne niz
         const float outer_bottom = bottom - thickness;
-        if (positions_y[idx] + particle_radius > outer_bottom &&
-            positions_y[idx] - particle_radius < outer_bottom + thickness) {
+        if (positions_y[idx] + particle_radius > outer_bottom && positions_y[idx] - particle_radius < outer_bottom + thickness) {
             positions_y[idx] = outer_bottom - particle_radius;
             velocities_y[idx] *= -1.0f;
         }
     }
 
     // korzina ubivaet
-    if (positions_x[idx] >= basket_left &&
-        positions_x[idx] <= basket_right &&
-        positions_y[idx] >= basket_bottom &&
-        positions_y[idx] <= basket_top)
+    if (positions_x[idx] >= basket_left && positions_x[idx] <= basket_right && positions_y[idx] >= basket_bottom && positions_y[idx] <= basket_top)
     {
         active[idx] = 0;
         atomicAdd(&countCaptured, 1);
@@ -235,7 +231,7 @@ __global__ void updateParticles(float* positions_x, float* positions_y,
         positions_y[idx] >= seg_bottom - particle_radius &&
         positions_y[idx] <= seg_top + particle_radius)
     {
-   
+
         if (prev_y > seg_top && positions_y[idx] <= seg_top) {
             velocities_y[idx] *= -1.0f;
             positions_y[idx] = seg_top + particle_radius;
@@ -268,7 +264,7 @@ __global__ void updateParticles(float* positions_x, float* positions_y,
             positions_y[idx] >= r_bottom &&
             positions_y[idx] <= r_top) {
 
-            // Вертикальные столкновения
+            
             if (prev_y > rect_top && positions_y[idx] <= rect_top) {
                 velocities_y[idx] *= -1.0f;
                 positions_y[idx] = rect_top + particle_radius;
@@ -278,7 +274,6 @@ __global__ void updateParticles(float* positions_x, float* positions_y,
                 positions_y[idx] = rect_bottom - particle_radius;
             }
 
-            // Горизонтальные столкновения
             if (prev_x < rect_left && positions_x[idx] >= rect_left) {
                 velocities_x[idx] *= -1.0f;
                 positions_x[idx] = rect_left - particle_radius;
@@ -295,15 +290,7 @@ __global__ void updateParticles(float* positions_x, float* positions_y,
 
 }
 
-__global__ void processBlockPrikSkok(
-    float* positions_x,
-    float* positions_y,
-    float* velocities_x,
-    float* velocities_y,
-    int* types,
-    int numParticles,
-    float min_dist
-) {
+__global__ void processBlockPrikSkok(float* positions_x, float* positions_y, float* velocities_x, float* velocities_y, int* types, int numParticles, float min_dist) {
     // usaem shared
     __shared__ struct {
         float x[BLOCK_SIZE];
@@ -419,7 +406,7 @@ __global__ void processGridPrikSkok(
 
                     if (relVel >= 0) continue;
 
-                    const float impulse = -0.9f * relVel;
+                    const float impulse = -1.0f * relVel; // nado vernut'... mne ne nrav bez edinicy
                     delta_vx += impulse * nx;
                     delta_vy += impulse * ny;
 
@@ -509,7 +496,7 @@ __global__ void ClearTexture(cudaSurfaceObject_t surface, int width, int height)
     if (rect_exists) {
         if (worldX >= rect_left && worldX <= rect_right &&
             worldY >= rect_bottom && worldY <= rect_top) {
-            color = make_uchar4(255, 255, 0, 255); // Желтый цвет
+            color = make_uchar4(255, 255, 0, 255); // pust budet yello
         }
     }
 
@@ -589,40 +576,28 @@ void initParticles() {
     std::vector<float> vel_y(numParticles);
     std::vector<int> types(numParticles);
 
-    // Параметры зон спавна
-    const float spawnWidth = 0.2f;      // Ширина зоны спавна
-    const float spawnHeight = 0.1f;     // Высота зоны спавна
-    const float spawnY = -0.9f;         // Y-координата нижнего края зоны спавна
-
-    // Для типа A (слева)
+    const float spawnWidth = 0.2f; // smestili
+    const float spawnHeight = 0.1f;
+    const float spawnY = -0.9f;
     const float leftSpawnStart = -1.0f;
     const float leftSpawnEnd = leftSpawnStart + spawnWidth;
-
-    // Для типа B (справа)
     const float rightSpawnStart = 1.0f - spawnWidth;
     const float rightSpawnEnd = 1.0f;
 
     for (int i = 0; i < numParticles; ++i) {
-        // Определяем тип частицы
         types[i] = (i % 2 == 0) ? PARTICLE_TYPE_A : PARTICLE_TYPE_B;
 
         if (types[i] == PARTICLE_TYPE_A) {
-            // Спавн слева
             pos_x[i] = leftSpawnStart + static_cast<float>(rand()) / RAND_MAX * spawnWidth;
             pos_y[i] = spawnY + static_cast<float>(rand()) / RAND_MAX * spawnHeight;
-
-            // Начальная скорость вправо и вверх
-            vel_x[i] = (rand() % 100) / 100.0f + 0.2f;  // 0.2 - 0.7
-            vel_y[i] = (rand() % 100) / 100.0f + 0.5f;  // 0.5 - 1.0
+            vel_x[i] = (rand() % 100) / 200.0f + 0.2f;  // 0.2 - 0.7
+            vel_y[i] = (rand() % 100) / 200.0f + 0.5f;  // 0.5 - 1.0
         }
         else {
-            // Спавн справа
             pos_x[i] = rightSpawnStart + static_cast<float>(rand()) / RAND_MAX * spawnWidth;
             pos_y[i] = spawnY + static_cast<float>(rand()) / RAND_MAX * spawnHeight;
-
-            // Начальная скорость влево и вверх
-            vel_x[i] = -(rand() % 100) / 100.0f - 0.2f; // -0.2 - -0.7
-            vel_y[i] = (rand() % 100) / 100.0f + 0.5f; // 0.5 - 1.0
+            vel_x[i] = -(rand() % 100) / 200.0f - 0.2f; // -0.2 - -0.7
+            vel_y[i] = (rand() % 100) / 200.0f + 0.5f; // 0.5 - 1.0
         }
     }
 
@@ -631,7 +606,7 @@ void initParticles() {
     cudaMemcpy(cudaParams.velocities_x, vel_x.data(), numParticles * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(cudaParams.velocities_y, vel_y.data(), numParticles * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(cudaParams.types, types.data(), numParticles * sizeof(int), cudaMemcpyHostToDevice);
- 
+
     std::vector<int> activeHost(numParticles, 1);
 
     cudaMemcpy(cudaParams.active, activeHost.data(), numParticles * sizeof(int), cudaMemcpyHostToDevice);
@@ -641,11 +616,11 @@ void initParticles() {
 
 void initBasketParams() {
 
-    const float h_basket_left = 0.3f;    // Было 0.4f
-    const float h_basket_right = 0.7f;   // Было 0.9f
-    const float h_basket_bottom = 0.4f;  // Было 0.5f
-    const float h_basket_top = 0.5f;     // Было 0.6f
-    const float h_basket_thickness = 0.005f; // Было 0.005f
+    const float h_basket_left = 0.3f;
+    const float h_basket_right = 0.7f;
+    const float h_basket_bottom = 0.4f;
+    const float h_basket_top = 0.5f;
+    const float h_basket_thickness = 0.005f;
 
     // copy to videokarta
     cudaMemcpyToSymbol(basket_left, &h_basket_left, sizeof(float));
@@ -704,27 +679,21 @@ float actual_segment_x = h_segment_x;
 float actual_segment_y = h_segment_y;
 
 void display() {
-    
-    // for up snizu
-
 
     int currentTime = glutGet(GLUT_ELAPSED_TIME);
     float elapsedSeconds = (currentTime - startTime) / 1000.0f;
     float remainingTime = GAME_SECONDS - elapsedSeconds;
-    
-
 
     if (!gameOver && !gameWon) {
         if (remainingTime <= 0) {
             gameOver = true;
         }
-        else if (capturedParticles >= 10000) {
+        else if (capturedParticles >= 45) {
             gameWon = true;
         }
     }
-    
-    if (!gameOver && !gameWon) {
 
+    if (!gameOver && !gameWon) {
 
         actual_segment_x += (h_segment_x - actual_segment_x) * deltaTime * 10.0f;
         actual_segment_y += (h_segment_y - actual_segment_y) * deltaTime * 10.0f;
@@ -733,26 +702,14 @@ void display() {
 
         dim3 block(BLOCK_SIZE);
         dim3 grid((numParticles + BLOCK_SIZE - 1) / BLOCK_SIZE);
+        
         // upldate
-        updateParticles << <grid, block >> > (
-            cudaParams.positions_x,
-            cudaParams.positions_y,
-            cudaParams.velocities_x,
-            cudaParams.velocities_y,
-            numParticles,
-            deltaTime,
-            cudaParams.active
-            );
+        updateParticles << <grid, block >> > (cudaParams.positions_x, cudaParams.positions_y, cudaParams.velocities_x, cudaParams.velocities_y, numParticles, deltaTime, cudaParams.active);
         cudaDeviceSynchronize();
         checkCudaError(cudaGetLastError(), "Update particles kernel");
 
         // sort po grid
-        sortParticles << <grid, block >> > (
-            cudaParams.positions_x,
-            cudaParams.positions_y,
-            cudaParams.cellIndices,
-            numParticles
-            );
+        sortParticles << <grid, block >> > (cudaParams.positions_x, cudaParams.positions_y, cudaParams.cellIndices, numParticles);
         cudaDeviceSynchronize();
         checkCudaError(cudaGetLastError(), "Sort particles kernel");
 
@@ -779,21 +736,11 @@ void display() {
         checkCudaError(cudaGetLastError(), "Setup grid kernel");
 
         // Prik-Skok blok
-        processBlockPrikSkok << <grid, block >> > (
-            cudaParams.positions_x,
-            cudaParams.positions_y,
-            cudaParams.velocities_x,
-            cudaParams.velocities_y,
-            cudaParams.types,
-            numParticles,
-            min_distance
-            );
+        processBlockPrikSkok << <grid, block >> > (cudaParams.positions_x, cudaParams.positions_y, cudaParams.velocities_x, cudaParams.velocities_y, cudaParams.types, numParticles, min_distance);
         cudaDeviceSynchronize();
+        
         // prik skok grid
-        processGridPrikSkok << <grid, block >> > (
-            cudaParams.positions_x,
-            cudaParams.positions_y,
-            cudaParams.velocities_x,
+        processGridPrikSkok << <grid, block >> > ( cudaParams.positions_x, cudaParams.positions_y,cudaParams.velocities_x,
             cudaParams.velocities_y,
             cudaParams.types,
             cudaParams.cellStarts,
@@ -898,10 +845,10 @@ void display() {
 
         cudaMemcpyFromSymbol(&capturedParticles, countCaptured, sizeof(int));
     }
-    
-    
+
+
     std::stringstream ss;
-    ss << "Poymano: " << capturedParticles << " /10";
+    ss << "Poymano: " << capturedParticles << " /45";
     renderText(ss.str(), 20, winHeight - 40);
 
     ss.str("");
@@ -909,10 +856,10 @@ void display() {
     renderText(ss.str(), 20, winHeight - 70);
 
     if (gameOver) {
-        renderText("Game Over! Ne poymano 10 za 15 sec.", winWidth / 2 - 150, winHeight / 2);
+        renderText("Game Over! Ne poymano 45 za 15 sec.", winWidth / 2 - 150, winHeight / 2);
     }
     else if (gameWon) {
-        renderText("Pobeda! 10 poymano!", winWidth / 2 - 100, winHeight / 2);
+        renderText("Pobeda! 45 poymano!", winWidth / 2 - 100, winHeight / 2);
 
     }
 
@@ -930,16 +877,6 @@ void display() {
 
 ///// RENDERING  ////////////////
 
-
-
-
-
-
-
-
-
-
-
 int main(int argc, char** argv) {
     glutInit(&argc, argv);
     glutInitWindowSize(winWidth, winHeight);
@@ -948,7 +885,7 @@ int main(int argc, char** argv) {
 
     glewInit();
 
-    
+
 
     glGenTextures(1, &cudaParams.texture);
     glBindTexture(GL_TEXTURE_2D, cudaParams.texture);
@@ -959,7 +896,7 @@ int main(int argc, char** argv) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-    
+
 
     cudaError_t err = cudaGraphicsGLRegisterImage(&cudaParams.cudaResource,
         cudaParams.texture, GL_TEXTURE_2D, cudaGraphicsRegisterFlagsWriteDiscard);

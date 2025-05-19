@@ -72,7 +72,7 @@ int capturedParticles = 0;
 
 
 int startTime;
-const int GAME_SECONDS = 150;
+const int GAME_SECONDS = 15;
 bool gameOver = false;
 bool gameWon = false;
 
