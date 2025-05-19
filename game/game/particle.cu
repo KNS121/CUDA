@@ -50,6 +50,12 @@ float move_speed = 0.2f;
 
 int capturedParticles = 0;
 
+
+int startTime;
+const int GAME_SECONDS = 15;
+bool gameOver = false;
+bool gameWon = false;
+
 void keyboard(unsigned char key, int x, int y);
 
 
@@ -561,178 +567,210 @@ void initParticles() {
 }
 
 void display() {
-    
-    dim3 block(BLOCK_SIZE);
-    dim3 grid((numParticles + BLOCK_SIZE - 1) / BLOCK_SIZE);
-    // upldate
-    updateParticles << <grid, block >> > (
-        cudaParams.positions_x,
-        cudaParams.positions_y,
-        cudaParams.velocities_x,
-        cudaParams.velocities_y,
-        numParticles,
-        deltaTime,
-        cudaParams.active
-        );
-    cudaDeviceSynchronize();
-    checkCudaError(cudaGetLastError(), "Update particles kernel");
 
-    // sort po grid
-    sortParticles << <grid, block >> > (
-        cudaParams.positions_x,
-        cudaParams.positions_y,
-        cudaParams.cellIndices,
-        numParticles
-        );
-    cudaDeviceSynchronize();
-    checkCudaError(cudaGetLastError(), "Sort particles kernel");
+    int currentTime = glutGet(GLUT_ELAPSED_TIME);
+    float elapsedSeconds = (currentTime - startTime) / 1000.0f;
+    float remainingTime = GAME_SECONDS - elapsedSeconds;
 
-    // trust
-    thrust::sort(
-        thrust::device_ptr<int>(cudaParams.cellIndices),
-        thrust::device_ptr<int>(cudaParams.cellIndices + numParticles)
-    );
-
-    // init grid
-    cudaMemset(cudaParams.cellStarts, 0xFF, GRID_SIZE * GRID_SIZE * sizeof(int));
-    cudaMemset(cudaParams.cellEnds, 0xFF, GRID_SIZE * GRID_SIZE * sizeof(int));
-
-    // stroim grid
-    dim3 setupBlock(256);
-    dim3 gridSetup((numParticles + setupBlock.x - 1) / setupBlock.x);
-    setupGrid << <gridSetup, setupBlock >> > (
-        cudaParams.cellIndices,
-        cudaParams.cellStarts,
-        cudaParams.cellEnds,
-        numParticles
-        );
-    cudaDeviceSynchronize();
-    checkCudaError(cudaGetLastError(), "Setup grid kernel");
-
-    // Prik-Skok blok
-    processBlockPrikSkok << <grid, block >> > (
-        cudaParams.positions_x,
-        cudaParams.positions_y,
-        cudaParams.velocities_x,
-        cudaParams.velocities_y,
-        cudaParams.types,
-        numParticles,
-        min_distance
-        );
-    cudaDeviceSynchronize();
-    // prik skok grid
-    processGridPrikSkok << <grid, block >> > (
-        cudaParams.positions_x,
-        cudaParams.positions_y,
-        cudaParams.velocities_x,
-        cudaParams.velocities_y,
-        cudaParams.types,
-        cudaParams.cellStarts,
-        cudaParams.cellEnds,
-        cudaParams.cellIndices,
-        numParticles,
-        min_distance
-        );
-    cudaDeviceSynchronize();
-    checkCudaError(cudaGetLastError(), "Collision processing kernel");
-
-    // delete
-    thrust::device_ptr<float> d_pos_x(cudaParams.positions_x);
-    thrust::device_ptr<float> d_pos_y(cudaParams.positions_y);
-    thrust::device_ptr<float> d_vel_x(cudaParams.velocities_x);
-    thrust::device_ptr<float> d_vel_y(cudaParams.velocities_y);
-    thrust::device_ptr<int> d_types(cudaParams.types);
-    thrust::device_ptr<int> d_active(cudaParams.active);
-
-    auto begin = thrust::make_zip_iterator(
-        thrust::make_tuple(d_pos_x, d_pos_y, d_vel_x, d_vel_y, d_types, d_active) //ediniy array from many arrays and parameters
-    );
-    auto end = begin + numParticles;
-
-    // nado vse active 0 -> v konec
-    auto new_end = thrust::remove_if(
-        thrust::cuda::par,
-        begin,
-        end,
-        [] __device__(const thrust::tuple<float, float, float, float, int, int>&t) {
-        return thrust::get<5>(t) == 0; // 5-iy element - active
+    if (!gameOver && !gameWon) {
+        if (remainingTime <= 0) {
+            gameOver = true;
+        }
+        else if (capturedParticles >= 10) {
+            gameWon = true;
+        }
     }
-    );
-    numParticles = new_end - begin;
-
-    // recreate grid
-    dim3 blockSort(BLOCK_SIZE);
-    dim3 gridSort((numParticles + BLOCK_SIZE - 1) / BLOCK_SIZE);
-
-    sortParticles << <gridSort, blockSort >> > (
-        cudaParams.positions_x,
-        cudaParams.positions_y,
-        cudaParams.cellIndices,
-        numParticles
-        );
-    cudaDeviceSynchronize();
-
-    thrust::sort(
-        thrust::device_ptr<int>(cudaParams.cellIndices),
-        thrust::device_ptr<int>(cudaParams.cellIndices + numParticles)
-    );
-
-
-    cudaGraphicsMapResources(1, &cudaParams.cudaResource, 0);
-    cudaArray* array;
-    cudaGraphicsSubResourceGetMappedArray(&array, cudaParams.cudaResource, 0, 0);
-
-    cudaResourceDesc resDesc = {};
-    resDesc.resType = cudaResourceTypeArray;
-    resDesc.res.array.array = array;
-    cudaSurfaceObject_t surface;
-    cudaCreateSurfaceObject(&surface, &resDesc);
-
-
-    dim3 clearBlock(32, 32);
-    dim3 clearGrid(
-        (winWidth + clearBlock.x - 1) / clearBlock.x,
-        (winHeight + clearBlock.y - 1) / clearBlock.y
-    );
-    ClearTexture << <clearGrid, clearBlock >> > (surface, winWidth, winHeight);
-    cudaDeviceSynchronize();
-
-
-    drawParticles << <grid, block >> > (
-        surface,
-        cudaParams.positions_x,
-        cudaParams.positions_y,
-        cudaParams.types,
-        numParticles,
-        winWidth,
-        winHeight
-        );
-    cudaDeviceSynchronize();
-
-
-    cudaDestroySurfaceObject(surface);
-    cudaGraphicsUnmapResources(1, &cudaParams.cudaResource, 0);
-
-
-    glClear(GL_COLOR_BUFFER_BIT);
-    glEnable(GL_TEXTURE_2D);
-    glBindTexture(GL_TEXTURE_2D, cudaParams.texture);
-
-    glBegin(GL_QUADS);
-    glTexCoord2f(0.0f, 0.0f); glVertex2f(-1.0f, -1.0f);
-    glTexCoord2f(1.0f, 0.0f); glVertex2f(1.0f, -1.0f);
-    glTexCoord2f(1.0f, 1.0f); glVertex2f(1.0f, 1.0f);
-    glTexCoord2f(0.0f, 1.0f); glVertex2f(-1.0f, 1.0f);
-    glEnd();
-
-    glDisable(GL_TEXTURE_2D);
     
-    cudaMemcpyFromSymbol(&capturedParticles, countCaptured, sizeof(int));
+    if (!gameOver && !gameWon) {
+
+
+
+
+        dim3 block(BLOCK_SIZE);
+        dim3 grid((numParticles + BLOCK_SIZE - 1) / BLOCK_SIZE);
+        // upldate
+        updateParticles << <grid, block >> > (
+            cudaParams.positions_x,
+            cudaParams.positions_y,
+            cudaParams.velocities_x,
+            cudaParams.velocities_y,
+            numParticles,
+            deltaTime,
+            cudaParams.active
+            );
+        cudaDeviceSynchronize();
+        checkCudaError(cudaGetLastError(), "Update particles kernel");
+
+        // sort po grid
+        sortParticles << <grid, block >> > (
+            cudaParams.positions_x,
+            cudaParams.positions_y,
+            cudaParams.cellIndices,
+            numParticles
+            );
+        cudaDeviceSynchronize();
+        checkCudaError(cudaGetLastError(), "Sort particles kernel");
+
+        // trust
+        thrust::sort(
+            thrust::device_ptr<int>(cudaParams.cellIndices),
+            thrust::device_ptr<int>(cudaParams.cellIndices + numParticles)
+        );
+
+        // init grid
+        cudaMemset(cudaParams.cellStarts, 0xFF, GRID_SIZE * GRID_SIZE * sizeof(int));
+        cudaMemset(cudaParams.cellEnds, 0xFF, GRID_SIZE * GRID_SIZE * sizeof(int));
+
+        // stroim grid
+        dim3 setupBlock(256);
+        dim3 gridSetup((numParticles + setupBlock.x - 1) / setupBlock.x);
+        setupGrid << <gridSetup, setupBlock >> > (
+            cudaParams.cellIndices,
+            cudaParams.cellStarts,
+            cudaParams.cellEnds,
+            numParticles
+            );
+        cudaDeviceSynchronize();
+        checkCudaError(cudaGetLastError(), "Setup grid kernel");
+
+        // Prik-Skok blok
+        processBlockPrikSkok << <grid, block >> > (
+            cudaParams.positions_x,
+            cudaParams.positions_y,
+            cudaParams.velocities_x,
+            cudaParams.velocities_y,
+            cudaParams.types,
+            numParticles,
+            min_distance
+            );
+        cudaDeviceSynchronize();
+        // prik skok grid
+        processGridPrikSkok << <grid, block >> > (
+            cudaParams.positions_x,
+            cudaParams.positions_y,
+            cudaParams.velocities_x,
+            cudaParams.velocities_y,
+            cudaParams.types,
+            cudaParams.cellStarts,
+            cudaParams.cellEnds,
+            cudaParams.cellIndices,
+            numParticles,
+            min_distance
+            );
+        cudaDeviceSynchronize();
+        checkCudaError(cudaGetLastError(), "Collision processing kernel");
+
+        // delete
+        thrust::device_ptr<float> d_pos_x(cudaParams.positions_x);
+        thrust::device_ptr<float> d_pos_y(cudaParams.positions_y);
+        thrust::device_ptr<float> d_vel_x(cudaParams.velocities_x);
+        thrust::device_ptr<float> d_vel_y(cudaParams.velocities_y);
+        thrust::device_ptr<int> d_types(cudaParams.types);
+        thrust::device_ptr<int> d_active(cudaParams.active);
+
+        auto begin = thrust::make_zip_iterator(
+            thrust::make_tuple(d_pos_x, d_pos_y, d_vel_x, d_vel_y, d_types, d_active) //ediniy array from many arrays and parameters
+        );
+        auto end = begin + numParticles;
+
+        // nado vse active 0 -> v konec
+        auto new_end = thrust::remove_if(
+            thrust::cuda::par,
+            begin,
+            end,
+            [] __device__(const thrust::tuple<float, float, float, float, int, int>&t) {
+            return thrust::get<5>(t) == 0; // 5-iy element - active
+        }
+        );
+        numParticles = new_end - begin;
+
+        // recreate grid
+        dim3 blockSort(BLOCK_SIZE);
+        dim3 gridSort((numParticles + BLOCK_SIZE - 1) / BLOCK_SIZE);
+
+        sortParticles << <gridSort, blockSort >> > (
+            cudaParams.positions_x,
+            cudaParams.positions_y,
+            cudaParams.cellIndices,
+            numParticles
+            );
+        cudaDeviceSynchronize();
+
+        thrust::sort(
+            thrust::device_ptr<int>(cudaParams.cellIndices),
+            thrust::device_ptr<int>(cudaParams.cellIndices + numParticles)
+        );
+
+
+        cudaGraphicsMapResources(1, &cudaParams.cudaResource, 0);
+        cudaArray* array;
+        cudaGraphicsSubResourceGetMappedArray(&array, cudaParams.cudaResource, 0, 0);
+
+        cudaResourceDesc resDesc = {};
+        resDesc.resType = cudaResourceTypeArray;
+        resDesc.res.array.array = array;
+        cudaSurfaceObject_t surface;
+        cudaCreateSurfaceObject(&surface, &resDesc);
+
+
+        dim3 clearBlock(32, 32);
+        dim3 clearGrid(
+            (winWidth + clearBlock.x - 1) / clearBlock.x,
+            (winHeight + clearBlock.y - 1) / clearBlock.y
+        );
+        ClearTexture << <clearGrid, clearBlock >> > (surface, winWidth, winHeight);
+        cudaDeviceSynchronize();
+
+
+        drawParticles << <grid, block >> > (
+            surface,
+            cudaParams.positions_x,
+            cudaParams.positions_y,
+            cudaParams.types,
+            numParticles,
+            winWidth,
+            winHeight
+            );
+        cudaDeviceSynchronize();
+
+
+        cudaDestroySurfaceObject(surface);
+        cudaGraphicsUnmapResources(1, &cudaParams.cudaResource, 0);
+
+
+        glClear(GL_COLOR_BUFFER_BIT);
+        glEnable(GL_TEXTURE_2D);
+        glBindTexture(GL_TEXTURE_2D, cudaParams.texture);
+
+        glBegin(GL_QUADS);
+        glTexCoord2f(0.0f, 0.0f); glVertex2f(-1.0f, -1.0f);
+        glTexCoord2f(1.0f, 0.0f); glVertex2f(1.0f, -1.0f);
+        glTexCoord2f(1.0f, 1.0f); glVertex2f(1.0f, 1.0f);
+        glTexCoord2f(0.0f, 1.0f); glVertex2f(-1.0f, 1.0f);
+        glEnd();
+
+        glDisable(GL_TEXTURE_2D);
+
+        cudaMemcpyFromSymbol(&capturedParticles, countCaptured, sizeof(int));
+}
+    
+    
     std::stringstream ss;
-    ss << "Poymano: " << capturedParticles;
+    ss << "Poymano: " << capturedParticles << " /10";
     renderText(ss.str(), 20, winHeight - 40);
 
-    glutSwapBuffers();
+    ss.str("");
+    ss << "Time: " << (remainingTime > 0 ? static_cast<int>(remainingTime) : 0) << " sec";
+    renderText(ss.str(), 20, winHeight - 70);
+
+    if (gameOver) {
+        renderText("Game Over! Ne poymano 10 za 15 sec.", winWidth / 2 - 150, winHeight / 2);
+    }
+    else if (gameWon) {
+        renderText("Pobeda! 10 poymano!", winWidth / 2 - 100, winHeight / 2);
+}
+
+glutSwapBuffers();
 
     //int captured;
     //cudaMemcpyFromSymbol(&captured, countCaptured, sizeof(int));
@@ -822,12 +860,14 @@ int main(int argc, char** argv) {
 
     int zero = 0;
     cudaMemcpyToSymbol(countCaptured, &zero, sizeof(int));
-
+    startTime = glutGet(GLUT_ELAPSED_TIME);
     initParticles();
     glutKeyboardFunc(keyboard);
     glutDisplayFunc(display);
     glutIdleFunc([]() { glutPostRedisplay(); });
     glutMainLoop();
+
+
 
     cudaFree(cudaParams.positions_x);
     cudaFree(cudaParams.positions_y);
