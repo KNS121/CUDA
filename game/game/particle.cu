@@ -7,11 +7,16 @@
 #include <cuda_runtime.h>
 #include <iostream>
 #include <vector>
+
+#include <string>
+#include <sstream>
+
 using namespace std;
 
 #include <thrust/remove.h>
 #include <thrust/execution_policy.h>
 
+__device__ int countCaptured;
 
 __constant__ float d_world_size = 2.0f;
 const float min_distance = 0.05f;
@@ -43,7 +48,35 @@ const float h_segment_length = 0.4f;
 const float h_segment_thickness = 0.02f;
 float move_speed = 0.2f;
 
+int capturedParticles = 0;
+
 void keyboard(unsigned char key, int x, int y);
+
+
+void renderText(const std::string& text, float x, float y) {
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix();
+    glLoadIdentity();
+    gluOrtho2D(0, winWidth, 0, winHeight);
+
+    glMatrixMode(GL_MODELVIEW);
+    glPushMatrix();
+    glLoadIdentity();
+
+    glColor3f(1.0, 1.0, 1.0);
+    glRasterPos2f(x, y);
+
+    for (const char& c : text) {
+        glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, c);
+    }
+
+    glPopMatrix();
+    glMatrixMode(GL_PROJECTION);
+    glPopMatrix();
+    glMatrixMode(GL_MODELVIEW);
+}
+
+
 
 // for cuda
 __device__ int calcGridHash(float x, float y) {
@@ -182,6 +215,7 @@ __global__ void updateParticles(float* positions_x, float* positions_y,
         positions_y[idx] <= basket_top)
     {
         active[idx] = 0;
+        atomicAdd(&countCaptured, 1);
     }
 
 
@@ -427,7 +461,7 @@ __global__ void ClearTexture(cudaSurfaceObject_t surface, int width, int height)
 
     if (worldX >= seg_left && worldX <= seg_right &&
         worldY >= seg_bottom && worldY <= seg_top) {
-        color = make_uchar4(255, 255, 255, 255); // Белый цвет
+        color = make_uchar4(255, 255, 255, 255);
     }
 
     surf2Dwrite(color, surface, x * sizeof(uchar4), y);
@@ -692,7 +726,17 @@ void display() {
     glEnd();
 
     glDisable(GL_TEXTURE_2D);
+    
+    cudaMemcpyFromSymbol(&capturedParticles, countCaptured, sizeof(int));
+    std::stringstream ss;
+    ss << "Poymano: " << capturedParticles;
+    renderText(ss.str(), 20, winHeight - 40);
+
     glutSwapBuffers();
+
+    //int captured;
+    //cudaMemcpyFromSymbol(&captured, countCaptured, sizeof(int));
+    //std::cout << "Particles in basket: " << captured << std::endl;
 }
 
 
@@ -744,7 +788,7 @@ void initBasketParams() {
     const float h_gravity = -1.0f;
     cudaMemcpyToSymbol(gravity, &h_gravity, sizeof(float));
 
-    const float h_max_speed = 3.0f;
+    const float h_max_speed = 2.0f;
     cudaMemcpyToSymbol(max_speed, &h_max_speed, sizeof(float));
 
     checkCudaError(cudaGetLastError(), "Basket params copy to device");
@@ -775,6 +819,10 @@ int main(int argc, char** argv) {
 
     initCuda();
     initBasketParams();
+
+    int zero = 0;
+    cudaMemcpyToSymbol(countCaptured, &zero, sizeof(int));
+
     initParticles();
     glutKeyboardFunc(keyboard);
     glutDisplayFunc(display);
