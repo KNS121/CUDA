@@ -661,7 +661,7 @@ void initBasketParams() {
     const float h_gravity = -0.4f;
     cudaMemcpyToSymbol(gravity, &h_gravity, sizeof(float));
 
-    const float h_max_speed = 1.5f;
+    const float h_max_speed = 1.2f;
     cudaMemcpyToSymbol(max_speed, &h_max_speed, sizeof(float));
 
 
@@ -714,7 +714,7 @@ void display() {
         if (remainingTime <= 0) {
             gameOver = true;
         }
-        else if (capturedParticles >= 50) {
+        else if (capturedParticles >= 2000) {
             gameWon = true;
         }
     }
@@ -874,7 +874,7 @@ void display() {
 
 
     std::stringstream ss;
-    ss << "Poymano: " << capturedParticles << " /50";
+    ss << "Poymano: " << capturedParticles << " /20";
     renderText(ss.str(), 20, winHeight - 40);
 
     ss.str("");
@@ -882,10 +882,10 @@ void display() {
     renderText(ss.str(), 20, winHeight - 70);
 
     if (gameOver) {
-        renderText("Game Over! Ne poymano 50 za 15 sec.", winWidth / 2 - 150, winHeight / 2);
+        renderText("Game Over! Ne poymano 20 za 15 sec.", winWidth / 2 - 150, winHeight / 2);
     }
     else if (gameWon) {
-        renderText("Pobeda! 50 poymano!", winWidth / 2 - 100, winHeight / 2);
+        renderText("Pobeda! 20 poymano!", winWidth / 2 - 100, winHeight / 2);
 
     }
 
