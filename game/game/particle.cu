@@ -106,14 +106,16 @@ __global__ void setupGrid(int* cellIndices, int* cellStarts, int* cellEnds, int 
 
     int currentHash = cellIndices[idx] >> 16;
 
-    // start yacheyki
+    // start yacheyki odin hash  - odna gruppa
     if (idx == 0 || currentHash != (cellIndices[idx - 1] >> 16)) {
         cellStarts[currentHash] = idx;
+        //atomicMin(&cellStarts[currentHash], idx); // shob ne ustraivat' draku between threads
     }
 
     // end_yacheyki
     if (idx == numParticles - 1 || currentHash != (cellIndices[idx + 1] >> 16)) {
         cellEnds[currentHash] = idx + 1;
+        //atomicMax(&cellEnds[currentHash], idx + 1);
     }
 }
 
@@ -264,7 +266,7 @@ __global__ void updateParticles(float* positions_x, float* positions_y,
             positions_y[idx] >= r_bottom &&
             positions_y[idx] <= r_top) {
 
-            
+
             if (prev_y > rect_top && positions_y[idx] <= rect_top) {
                 velocities_y[idx] *= -1.0f;
                 positions_y[idx] = rect_top + particle_radius;
@@ -284,10 +286,6 @@ __global__ void updateParticles(float* positions_x, float* positions_y,
             }
         }
     }
-
-
-
-
 }
 
 __global__ void processBlockPrikSkok(float* positions_x, float* positions_y, float* velocities_x, float* velocities_y, int* types, int numParticles, float min_dist) {
@@ -303,7 +301,8 @@ __global__ void processBlockPrikSkok(float* positions_x, float* positions_y, flo
     const int idx = blockIdx.x * blockDim.x + threadIdx.x;
     const int tid = threadIdx.x;
 
-    if (idx < numParticles) {
+    // chto-to tupanul, lishnego nam ne nado
+    if (tid < numParticles - blockIdx.x * blockDim.x) { 
         shared.x[tid] = positions_x[idx];
         shared.y[tid] = positions_y[idx];
         shared.type[tid] = types[idx];
@@ -318,9 +317,13 @@ __global__ void processBlockPrikSkok(float* positions_x, float* positions_y, flo
     float delta_vx = 0.0f, delta_vy = 0.0f;
     float delta_x = 0.0f, delta_y = 0.0f;
 
+    //ostanetsa obrabotat'
+    int ostatok_num = numParticles - blockIdx.x * blockDim.x;
 
-    for (int i = 0; i < BLOCK_SIZE; ++i) {
+
+    for (int i = 0; i < min(BLOCK_SIZE, ostatok_num); ++i) {
         const int type2 = shared.type[i];
+        //sebya ne obrabatyvaem
         if (type1 == type2 || i == tid) continue;
 
         const float dx = shared.x[tid] - shared.x[i];
@@ -344,11 +347,24 @@ __global__ void processBlockPrikSkok(float* positions_x, float* positions_y, flo
             delta_y += overlap * ny;
         }
     }
+
+    __syncthreads();
+
     //ot greha podalshe
-    atomicAdd(&velocities_x[idx], delta_vx);
-    atomicAdd(&velocities_y[idx], delta_vy);
-    atomicAdd(&positions_x[idx], delta_x);
-    atomicAdd(&positions_y[idx], delta_y);
+    //atomicAdd(&velocities_x[idx], delta_vx);
+    //atomicAdd(&velocities_y[idx], delta_vy);
+    //atomicAdd(&positions_x[idx], delta_x);
+    //atomicAdd(&positions_y[idx], delta_y);
+
+    // every thread obrabatyvaet svoe, mozghno bystree
+
+    if (idx < numParticles) {
+        velocities_x[idx] = shared.vx[tid];
+        velocities_y[idx] = shared.vy[tid];
+        positions_x[idx] = shared.x[tid];
+        positions_y[idx] = shared.y[tid];
+    }
+
 }
 
 // mezhgdu gridami
@@ -389,6 +405,10 @@ __global__ void processGridPrikSkok(
 
             for (int k = start; k < end; k++) {
                 const int idx2 = cellIndices[k] & 0xFFFF;
+
+                // nado ne peresechsya s block-prik-skok
+                if (idx2 >= blockIdx.x * blockDim.x && idx2 < (blockIdx.x + 1) * blockDim.x) continue;
+                
                 if (idx2 <= idx) continue;
 
                 const int type2 = types[idx2];
@@ -423,10 +443,16 @@ __global__ void processGridPrikSkok(
         }
     }
 
-    atomicAdd(&velocities_x[idx], delta_vx);
-    atomicAdd(&velocities_y[idx], delta_vy);
-    atomicAdd(&positions_x[idx], delta_x);
-    atomicAdd(&positions_y[idx], delta_y);
+    //atomicAdd(&velocities_x[idx], delta_vx);
+    //atomicAdd(&velocities_y[idx], delta_vy);
+    //atomicAdd(&positions_x[idx], delta_x);
+    //atomicAdd(&positions_y[idx], delta_y);
+
+    // mozghno pobystree
+    velocities_x[idx] += delta_vx;
+    velocities_y[idx] += delta_vy;
+    positions_x[idx] += delta_x;
+    positions_y[idx] += delta_y;
 }
 
 
@@ -688,7 +714,7 @@ void display() {
         if (remainingTime <= 0) {
             gameOver = true;
         }
-        else if (capturedParticles >= 45) {
+        else if (capturedParticles >= 50) {
             gameWon = true;
         }
     }
@@ -848,7 +874,7 @@ void display() {
 
 
     std::stringstream ss;
-    ss << "Poymano: " << capturedParticles << " /45";
+    ss << "Poymano: " << capturedParticles << " /50";
     renderText(ss.str(), 20, winHeight - 40);
 
     ss.str("");
@@ -856,10 +882,10 @@ void display() {
     renderText(ss.str(), 20, winHeight - 70);
 
     if (gameOver) {
-        renderText("Game Over! Ne poymano 45 za 15 sec.", winWidth / 2 - 150, winHeight / 2);
+        renderText("Game Over! Ne poymano 50 za 15 sec.", winWidth / 2 - 150, winHeight / 2);
     }
     else if (gameWon) {
-        renderText("Pobeda! 45 poymano!", winWidth / 2 - 100, winHeight / 2);
+        renderText("Pobeda! 50 poymano!", winWidth / 2 - 100, winHeight / 2);
 
     }
 

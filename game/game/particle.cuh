@@ -56,10 +56,10 @@ __constant__ float gravity;
 __constant__ float max_speed;
 
 
-__constant__ float segment_x;
-__constant__ float segment_y;
-__constant__ float segment_length;
-__constant__ float segment_thickness;
+__device__ float segment_x;
+__device__ float segment_y;
+__device__ float segment_length;
+__device__ float segment_thickness;
 
 __device__ float rect_left;
 __device__ float rect_right;
