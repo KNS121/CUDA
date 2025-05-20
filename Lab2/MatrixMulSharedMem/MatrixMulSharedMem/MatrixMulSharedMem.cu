@@ -64,42 +64,40 @@ __global__ void MatrixMultplyGPU_SharedMemory(int* A, int* B, int* C, int n) {
     __shared__ int array_b_in_shared[BLOCK_SIZE][BLOCK_SIZE];
 
 
-    int index_of_A = 0;
-    int index_of_B = 0;
-
-    float blocks_pokrytie = (N + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    float blocks_pokrytie = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
 
     int res = 0;
 
     for (int i = 0; i < blocks_pokrytie; ++i) {
 
-        index_of_A = (idx + i * BLOCK_SIZE);
-        index_of_B = i * BLOCK_SIZE + idy;
+        int index_of_A = (idx + i * BLOCK_SIZE);
+        int index_of_B = i * BLOCK_SIZE + idy;
 
-        if (row < N && index_of_A < N) {
+        if (row < n && index_of_A < n) {
 
-            array_a_in_shared[idy][idx] = A[row * N + index_of_A];
+            array_a_in_shared[idy][idx] = A[row * n + index_of_A];
         }
-        else array_a_in_shared[idy][idx] = 0;
+        else { array_a_in_shared[idy][idx] = 0; }
 
-        if (col < N && index_of_B < N) {
-            array_b_in_shared[idy][idx] = B[idy * N + col];
+        if (col < n && index_of_B < n) {
+            array_b_in_shared[idy][idx] = B[index_of_B * n + col];
         }
 
-        else array_b_in_shared[idy][idx] = 0;
+        else { array_b_in_shared[idy][idx] = 0; }
+
+
+        __syncthreads();
+
+        for (int k = 0; k < BLOCK_SIZE; k++) {
+            res += array_a_in_shared[idy][k] * array_b_in_shared[k][idx];
+        }
+
+        __syncthreads();
     }
 
-    __syncthreads();
-
-    for (int k = 0; k < BLOCK_SIZE; k++) {
-        res += array_a_in_shared[idy][k] * array_b_in_shared[k][idx];
-    }
-
-    __syncthreads();
-
-    if (row < N && col < N) {
-        C[row * N + col] = res;
+    if (row < n && col < n) {
+        C[row * n + col] = res;
     }
 
 
