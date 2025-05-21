@@ -714,7 +714,7 @@ void display() {
         if (remainingTime <= 0) {
             gameOver = true;
         }
-        else if (capturedParticles >= 2000) {
+        else if (capturedParticles >= 20) {
             gameWon = true;
         }
     }
