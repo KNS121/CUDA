@@ -8,11 +8,11 @@
 #include <chrono>
 
 
-#define N 1024
+#define N 4
 #define BLOCK_SIZE 32
 
 dim3 kolvo_potokov(32, 32);
-dim3 kolvo_blockov(32, 32);
+dim3 kolvo_blockov(32,32);
 
 using namespace std;
 using std::vector;
@@ -50,68 +50,64 @@ bool proverka_results(const vector<vector<int>>& Res_CPU, const vector<vector<in
     return true;
 }
 
+#define TILE_SIZE 32
+#define WARPSIZE 32
+
+
+
+#define WARP_SIZE 32
+
 
 
 __global__ void MatrixMultplyGPU_WaprIntr(const int* a, const int* b, int* c, int n) {
     int row = blockIdx.y * BLOCK_SIZE + threadIdx.y;
     int col = blockIdx.x * BLOCK_SIZE + threadIdx.x;
-
     int idx = threadIdx.x;
     int idy = threadIdx.y;
 
-
-    __shared__ int array_a_in_shared[BLOCK_SIZE][BLOCK_SIZE];
-    __shared__ int array_b_in_shared[BLOCK_SIZE][BLOCK_SIZE];
-
-
-    float blocks_pokrytie = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
-
+    __shared__ int array_a_in_shared[BLOCK_SIZE][BLOCK_SIZE + 1];
+    __shared__ int array_b_in_shared[BLOCK_SIZE][BLOCK_SIZE + 1];
 
     int res = 0;
-
-
+    float blocks_pokrytie = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
     for (int i = 0; i < blocks_pokrytie; ++i) {
-
-        int index_of_A = (idx + i * BLOCK_SIZE);
+        int index_of_A = idx + i * BLOCK_SIZE;
         int index_of_B = i * BLOCK_SIZE + idy;
 
-        if (row < n && index_of_A < n) {
-
+        // Загрузка A
+        if (row < n && index_of_A < n)
             array_a_in_shared[idy][idx] = a[row * n + index_of_A];
-        }
-        else { array_a_in_shared[idy][idx] = 0; }
+        else
+            array_a_in_shared[idy][idx] = 0;
 
-        if (col < n && index_of_B < n) {
-            array_b_in_shared[idy][idx] = b[index_of_B * n + col];
-        }
-
-        else { array_b_in_shared[idy][idx] = 0; }
-
+        // Загрузка B с транспонированием!
+        if (col < n && index_of_B < n)
+            array_b_in_shared[idx][idy] = b[index_of_B * n + col];  // idx ↔ idy
+        else
+            array_b_in_shared[idx][idy] = 0;
 
         __syncthreads();
-
 
         int thread_element_a = array_a_in_shared[idy][idx];
+        int thread_element_b = array_b_in_shared[idy][idx];  // Исправленный доступ
 
-        for (int lane = 0; lane < BLOCK_SIZE; ++lane) {
-
-            int a_val_from_other_threads = __shfl_sync(0xffffffff, thread_element_a, lane);
-
-            res += a_val_from_other_threads * array_b_in_shared[lane][idx];
-
+        // Корректный сбор данных
+        for (int k = 0; k < BLOCK_SIZE; ++k) {
+            int a_val = __shfl_sync(0xFFFFFFFF, thread_element_a, k);
+            int b_val = __shfl_sync(0xFFFFFFFF, thread_element_b, k);
+            res += a_val * b_val;
         }
 
         __syncthreads();
-
-
     }
 
-    if (row < n && col < n) {
+    if (row < n && col < n)
         c[row * n + col] = res;
-    }
-
 }
+
+
+
 
 
 
@@ -190,13 +186,13 @@ int main() {
     fillMatrix(A);
     fillMatrix(B);
 
-    //cout << "Matrix A\n" << endl;
-    //printMatrix(A);
-    //cout << "\n" << endl;
-    //cout << "Matrix B\n" << endl;
-    //printMatrix(B);
+    cout << "Matrix A\n" << endl;
+    printMatrix(A);
+    cout << "\n" << endl;
+    cout << "Matrix B\n" << endl;
+    printMatrix(B);
 
-    //cout << "\n" << endl;
+    cout << "\n" << endl;
 
     auto start_cpu = chrono::high_resolution_clock::now();
     vector<vector<int>> res_from_CPU = MatrixMultiplyCPU(A, B, N);
@@ -215,11 +211,11 @@ int main() {
 
     cout << "GPU time ( Warp intr ) : " << gpu_time.count() << " secund \n";
     cout << "GPU result:\n";
-    //printMatrix(res_from_GPU);
+    printMatrix(res_from_GPU);
 
     cout << "CPU time: " << cpu_time.count() << " secund \n";
     cout << "CPU result:\n";
-    //printMatrix(res_from_CPU);
+    printMatrix(res_from_CPU);
 
 
 

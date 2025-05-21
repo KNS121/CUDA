@@ -6,9 +6,7 @@
 *.out
 *.a
 *.so
-*.dll
-*.lib
-*.dylib
+
 
 # CMake
 CMakeCache.txt
