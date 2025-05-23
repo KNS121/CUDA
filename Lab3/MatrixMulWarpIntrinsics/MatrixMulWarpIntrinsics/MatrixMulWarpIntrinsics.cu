@@ -59,7 +59,40 @@ bool proverka_results(const vector<vector<int>>& Res_CPU, const vector<vector<in
 
 
 
-__global__ void MatrixMultplyGPU_WaprIntr(const int* a, const int* b, int* c, int n) {
+
+__global__ void MatrixMultplyGPU_WaprReduce(const int* A, const int* B, int* C, int n) {
+    int warpId = (blockIdx.x * blockDim.x + threadIdx.x) / WARPSIZE;
+    int lane = threadIdx.x % WARPSIZE;
+
+    if (warpId >= n * n) return;
+
+    int row = warpId / n;
+    int col = warpId % n;
+
+    int partial_sum = 0;
+
+    // patricle of sum
+    for (int k = lane; k < n; k += WARPSIZE) {
+        int a_val = A[row * n + k];
+        int b_val = B[k * n + col];
+        partial_sum += a_val * b_val;
+    }
+
+    // reduce
+    unsigned mask = 0xffffffff;
+    for (int offset = WARPSIZE / 2; offset > 0; offset /= 2) {
+        partial_sum += __shfl_down_sync(mask, partial_sum, offset);
+    }
+
+    // zapis' result with 0 thread
+    if (lane == 0) {
+        C[row * n + col] = partial_sum;
+    }
+}
+
+
+
+__global__ void MatrixMultplyGPU_Wapr_withShared(const int* a, const int* b, int* c, int n) {
     int row = blockIdx.y * BLOCK_SIZE + threadIdx.y;
     int col = blockIdx.x * BLOCK_SIZE + threadIdx.x;
 
@@ -99,7 +132,7 @@ __global__ void MatrixMultplyGPU_WaprIntr(const int* a, const int* b, int* c, in
 
         __syncthreads();
 
-        
+
         //+group warp
         coalesced_group warp = coalesced_threads();
         int thread_element_a = array_a_in_shared[idy][idx];
@@ -123,12 +156,7 @@ __global__ void MatrixMultplyGPU_WaprIntr(const int* a, const int* b, int* c, in
 
 
 
-
-
-
-
-
-vector<vector<int>> MatrixMultCUDA(const vector<vector<int>>& A, const vector<vector<int>>& B, const int n) {
+vector<vector<int>> MatrixMultCUDA_warp_with_reduce(const vector<vector<int>>& A, const vector<vector<int>>& B, const int n) {
 
     //one dim arrays
     int* one_dim_array_A = new int[n * n];
@@ -155,7 +183,69 @@ vector<vector<int>> MatrixMultCUDA(const vector<vector<int>>& A, const vector<ve
     cudaMemcpy(dev_A, one_dim_array_A, n * n * sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(dev_B, one_dim_array_B, n * n * sizeof(int), cudaMemcpyHostToDevice);
 
-    MatrixMultplyGPU_WaprIntr << < kolvo_blockov, kolvo_potokov >> > (dev_A, dev_B, dev_res, n);
+
+    int total_warps = (n * n);
+
+    int threads_per_block = 256;
+    int blocks = (total_warps * WARPSIZE + threads_per_block - 1) / threads_per_block;
+
+    MatrixMultplyGPU_WaprReduce << <blocks, threads_per_block >> > (dev_A, dev_B, dev_res, n);
+
+    // obratno
+    cudaMemcpy(one_dim_array_reuslt, dev_res, n * n * sizeof(int), cudaMemcpyDeviceToHost);
+
+    vector<vector<int>> resultMatrix(n, vector<int>(n, 0));
+
+    for (int i = 0; i < n; ++i) {
+        for (int j = 0; j < n; ++j) {
+            resultMatrix[i][j] = one_dim_array_reuslt[i * n + j];
+        }
+    }
+
+    // pochistim
+
+    delete[] one_dim_array_A;
+    delete[] one_dim_array_B;
+    delete[] one_dim_array_reuslt;
+
+    cudaFree(dev_A);
+    cudaFree(dev_B);
+    cudaFree(dev_res);
+
+
+    return resultMatrix;
+}
+
+
+
+vector<vector<int>> MatrixMultCUDA_warp_shared(const vector<vector<int>>& A, const vector<vector<int>>& B, const int n) {
+
+    //one dim arrays
+    int* one_dim_array_A = new int[n * n];
+    int* one_dim_array_B = new int[n * n];
+    int* one_dim_array_reuslt = new int[n * n];
+
+    for (int i = 0; i < n; ++i) {
+        for (int j = 0; j < n; ++j) {
+            one_dim_array_A[i * n + j] = A[i][j];
+            one_dim_array_B[i * n + j] = B[i][j];
+        }
+    }
+
+
+    // go to CUDA
+    int* dev_A;
+    int* dev_B;
+    int* dev_res;
+
+    cudaMalloc(&dev_A, n * n * sizeof(int));
+    cudaMalloc(&dev_B, n * n * sizeof(int));
+    cudaMalloc(&dev_res, n * n * sizeof(int));
+
+    cudaMemcpy(dev_A, one_dim_array_A, n * n * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(dev_B, one_dim_array_B, n * n * sizeof(int), cudaMemcpyHostToDevice);
+
+    MatrixMultplyGPU_Wapr_withShared << < kolvo_blockov, kolvo_potokov >> > (dev_A, dev_B, dev_res, n);
 
     // obratno
     cudaMemcpy(one_dim_array_reuslt, dev_res, n * n * sizeof(int), cudaMemcpyDeviceToHost);
@@ -198,30 +288,38 @@ int main() {
     fillMatrix(A);
     fillMatrix(B);
 
-   // cout << "Matrix A\n" << endl;
-   // printMatrix(A);
-   // cout << "\n" << endl;
-   // cout << "Matrix B\n" << endl;
-   // printMatrix(B);
+    // cout << "Matrix A\n" << endl;
+    // printMatrix(A);
+    // cout << "\n" << endl;
+    // cout << "Matrix B\n" << endl;
+    // printMatrix(B);
 
-   // cout << "\n" << endl;
+    // cout << "\n" << endl;
 
     auto start_cpu = chrono::high_resolution_clock::now();
     vector<vector<int>> res_from_CPU = MatrixMultiplyCPU(A, B, N);
     auto end_cpu = chrono::high_resolution_clock::now();
     chrono::duration<double> cpu_time = end_cpu - start_cpu;
 
-    auto start_gpu = chrono::high_resolution_clock::now();
-    vector<vector<int>> res_from_GPU = MatrixMultCUDA(A, B, N);
-    auto end_gpu = chrono::high_resolution_clock::now();
-    chrono::duration<double> gpu_time = end_gpu - start_gpu;
+    auto start_gpu_with_shared = chrono::high_resolution_clock::now();
+    vector<vector<int>> res_from_GPU_with_shared = MatrixMultCUDA_warp_shared(A, B, N);
+    auto end_gpu_with_shared = chrono::high_resolution_clock::now();
+    chrono::duration<double> gpu_time_with_shared = end_gpu_with_shared - start_gpu_with_shared;
+
+    auto start_gpu_warp_with_reduce = chrono::high_resolution_clock::now();
+    vector<vector<int>> res_from_GPU_with_reduce = MatrixMultCUDA_warp_with_reduce(A, B, N);
+    auto end_gpu_warp_with_reduce = chrono::high_resolution_clock::now();
+    chrono::duration<double> gpu_time_warp_with_reduce = end_gpu_warp_with_reduce - start_gpu_warp_with_reduce;
 
 
-    bool check = proverka_results(res_from_CPU, res_from_GPU, N);
+    bool check_with_shared = proverka_results(res_from_CPU, res_from_GPU_with_shared, N);
+
+    bool check_with_reduce = proverka_results(res_from_CPU, res_from_GPU_with_reduce, N);
 
     cout << "Razmer matrix : " << N << " \n";
 
-    cout << "GPU time ( Warp intr ) : " << gpu_time.count() << " secund \n";
+    cout << "GPU time ( Warp with shared ) : " << gpu_time_with_shared.count() << " secund \n";
+    cout << "GPU time ( Warp with reduce ) : " << gpu_time_warp_with_reduce.count() << " secund \n";
     //cout << "GPU result:\n";
     //printMatrix(res_from_GPU);
 
@@ -231,7 +329,9 @@ int main() {
 
 
 
-    cout << "proverka rezov - " << check << "\n";
+    cout << "proverka rezov  ( Warp + shared ) - " << check_with_shared << "\n";
+
+    cout << "proverka rezov  ( Warp + reduce ) - " << check_with_reduce << "\n";
 
     return 0;
 }
