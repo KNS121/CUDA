@@ -17,9 +17,7 @@ using namespace cooperative_groups;
 
 #define N 1024
 #define BLOCK_SIZE 32
-
-dim3 kolvo_potokov(32, 32);
-dim3 kolvo_blockov(32, 32);
+    
 
 using namespace std;
 using std::vector;
@@ -186,7 +184,7 @@ vector<vector<int>> MatrixMultCUDA_warp_with_reduce(const vector<vector<int>>& A
 
     int total_warps = (n * n);
 
-    int threads_per_block = 256;
+    int threads_per_block = 1024;
     int blocks = (total_warps * WARPSIZE + threads_per_block - 1) / threads_per_block;
 
     MatrixMultplyGPU_WaprReduce << <blocks, threads_per_block >> > (dev_A, dev_B, dev_res, n);
@@ -244,6 +242,9 @@ vector<vector<int>> MatrixMultCUDA_warp_shared(const vector<vector<int>>& A, con
 
     cudaMemcpy(dev_A, one_dim_array_A, n * n * sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(dev_B, one_dim_array_B, n * n * sizeof(int), cudaMemcpyHostToDevice);
+
+    dim3 kolvo_potokov(BLOCK_SIZE, BLOCK_SIZE);
+    dim3 kolvo_blockov(BLOCK_SIZE, BLOCK_SIZE);
 
     MatrixMultplyGPU_Wapr_withShared << < kolvo_blockov, kolvo_potokov >> > (dev_A, dev_B, dev_res, n);
 
